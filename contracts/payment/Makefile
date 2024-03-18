@@ -1,3 +1,5 @@
+TARGET=../../target
+
 default: build
 
 all: test
@@ -7,7 +9,7 @@ test: build
 
 build:
 	soroban contract build
-	#@ls -l target/wasm32-unknown-unknown/release/*.wasm
+	@ls -l $(TARGET)/wasm32-unknown-unknown/release/*.wasm
 
 fmt:
 	cargo fmt --all
