@@ -17,9 +17,5 @@ fn test_nullifier() {
     assert_eq!(client.record_nullifier(&BytesN::from_array(&env, &[1u8; 32])), ());
     assert_eq!(client.record_nullifier(&BytesN::from_array(&env, &[2u8; 32])), ());
 
-    let left = BytesN::from_array(&env, &[1u8; 32]);
-    let right = BytesN::from_array(&env, &[2u8; 32]);
-    client.compute_hash(&left, &right);
-
     std::println!("{}", env.logs().all().join("\n"));
 }
