@@ -98,7 +98,7 @@ impl SanctumContract {
                 right = current_level_hash.clone();
             }
 
-            current_level_hash = Mimc.hash(left, right);
+            current_level_hash = Self::sha256hash(&env, left, right);
             current_index = current_index / 2;
         }
 
@@ -139,13 +139,46 @@ impl SanctumContract {
 
         Ok(())
     }
-}
 
-pub struct Mimc;
+    pub fn compute_hash(env: Env, left: BytesN<32>, right: BytesN<32>)
+    {
+        let mut concatenated: BytesN<64> = BytesN::from_array(&env, &[0u8; 64]);
+        for (i,b) in left.iter().enumerate() {
+            concatenated.set(i.try_into().unwrap(), b);
+        }
+        for (i,b) in right.iter().enumerate() {
+            concatenated.set(i as u32 + 32, b);
+        }
 
-impl Mimc {
-    pub fn hash(&self, left: BytesN<32>, _right: BytesN<32>) -> BytesN<32> {
-        left.clone()
+        let hash = env.crypto().sha256(&concatenated.into());
+        log!(&env, "SHA256(left || right): {}", hash);
+
+
+        let h_left = env.crypto().sha256(&left.into());
+        let mut concatenated: BytesN<64> = BytesN::from_array(&env, &[0u8; 64]);
+        for (i,b) in h_left.iter().enumerate() {
+            concatenated.set(i.try_into().unwrap(), b);
+        }
+        for (i,b) in right.iter().enumerate() {
+            concatenated.set(i as u32 + 32, b);
+        }
+
+        let hash = env.crypto().sha256(&concatenated.into());
+        log!(&env, "SHA256(SHA256(left) || right): {}", hash);
+    }
+
+    fn sha256hash(env: &Env, left: BytesN<32>, right: BytesN<32>) -> BytesN<32>
+    {
+        let h_left = env.crypto().sha256(&left.into());
+        let mut concatenated: BytesN<64> = BytesN::from_array(&env, &[0u8; 64]);
+        for (i,b) in h_left.iter().enumerate() {
+            concatenated.set(i.try_into().unwrap(), b);
+        }
+        for (i,b) in right.iter().enumerate() {
+            concatenated.set(i as u32 + 32, b);
+        }
+
+        env.crypto().sha256(&concatenated.into())
     }
 }
 
