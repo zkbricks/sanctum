@@ -13,9 +13,9 @@ fn test_nullifier() {
 
     assert_eq!(client.initialize(), ());
 
-    assert_eq!(client.record_nullifier(&BytesN::from_array(&env, &[0u8; 32])), ());
-    assert_eq!(client.record_nullifier(&BytesN::from_array(&env, &[1u8; 32])), ());
-    assert_eq!(client.record_nullifier(&BytesN::from_array(&env, &[2u8; 32])), ());
+    assert_eq!(client.insert(&env.crypto().sha256(&BytesN::from_array(&env, &[0u8; 32]).into())), 0);
+    assert_eq!(client.insert(&env.crypto().sha256(&BytesN::from_array(&env, &[1u8; 32]).into())), 1);
+    assert_eq!(client.insert(&env.crypto().sha256(&BytesN::from_array(&env, &[2u8; 32]).into())), 2);
 
     std::println!("{}", env.logs().all().join("\n"));
 }

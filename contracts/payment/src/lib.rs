@@ -78,6 +78,8 @@ impl SanctumContract {
             return Err(SanctumError::ContractUnititialized);
         }
 
+        log!(&env, "[CONTRACTCALL] insert({})", leaf);
+
         // since the contract is initialized, it's safe to assume
         // that the state variable NextIndex exists
         let next_index: u32 = env.storage().persistent().get(&DataKey::NextIndex).unwrap();
@@ -92,7 +94,8 @@ impl SanctumContract {
             if current_index % 2 == 0 {
                 left = current_level_hash.clone();
                 right = BytesN::from_array(&env, &zeros(i));
-                env.storage().persistent().set(&DataKey::FilledSubtree(i), &BytesN::from_array(&env, &zeros(i)));
+                env.storage().persistent().set(&DataKey::FilledSubtree(i), &current_level_hash);
+                log!(&env, "setting filledSubtree({}): {}", i, current_level_hash);
             } else {
                 left = env.storage().persistent().get(&DataKey::FilledSubtree(i)).unwrap();
                 right = current_level_hash.clone();
@@ -114,6 +117,7 @@ impl SanctumContract {
 
         //roots[newRootIndex] = currentLevelHash;
         env.storage().persistent().set(&DataKey::Roots(new_root_index), &current_level_hash);
+        log!(&env, "setting roots({}): {}", new_root_index, current_level_hash);
 
         //nextIndex = nextIndex + 1;
         env.storage().persistent().set(&DataKey::NextIndex, &(next_index + 1));
