@@ -16,7 +16,7 @@ use lib_mpc_zexe::vector_commitment::bytes::sha256::{
 };
 
 use lib_mpc_zexe::apps;
-use lib_mpc_zexe::protocol::{self as protocol, trusted_setup};
+use lib_mpc_zexe::protocol::{self as protocol};
 
 // define the depth of the merkle tree as a constant
 const MERKLE_TREE_LEVELS: u32 = 15;
@@ -24,14 +24,19 @@ const MERKLE_TREE_LEVELS: u32 = 15;
 const ROOT_HISTORY_SIZE: u32 = 30;
 
 #[allow(non_camel_case_types)]
-enum GrothPublicInput {
-    /// Merkle tree root used in the proof
-    INPUT_ROOT = 0,
-    /// nullifier of the spent utxo
-    NULLIFIER = 1,
-    /// commitment of the created utxo
+pub enum PaymentGrothPublicInput {
+    ROOT = 0, // merkle root for proving membership of input utxo
+    NULLIFIER = 1, // commitment of output utxo
+    COMMITMENT = 2, // nullifier to the input utxo
+}
+
+#[allow(non_camel_case_types)]
+pub enum OnrampGrothPublicInput {
+    ASSET_ID = 0,
+    AMOUNT = 1,
     COMMITMENT = 2,
 }
+
 
 pub struct AppStateType {
     db: JZVectorDB<Vec<u8>>, //leaves of sha256 hashes
@@ -44,7 +49,7 @@ struct GlobalAppState {
 }
 
 // queries the merkle opening proof, as the L1 contract only stores the frontier merkle tree
-async fn get_merkle_proof(
+async fn serve_merkle_proof_request(
     global_state: web::Data<GlobalAppState>,
     index: web::Json<usize>
 ) -> String {
@@ -66,8 +71,7 @@ async fn get_merkle_proof(
     serde_json::to_string(&merkle_proof_bs58).unwrap()
 }
 
-// mirrors the logic on L1 contract, but stores the entire state (rather than frontier)
-async fn verify_payment_tx(
+async fn process_onramp_tx(
     global_state: web::Data<GlobalAppState>,
     proof: web::Json<protocol::GrothProofBs58>
 ) -> String {
@@ -95,7 +99,50 @@ async fn verify_payment_tx(
 
     // let's add all the output coins to the state
     let index: u32 = (*state).num_coins;
-    let com = public_inputs[GrothPublicInput::COMMITMENT as usize];
+    let com = public_inputs[PaymentGrothPublicInput::COMMITMENT as usize];
+
+    let mut com_as_bytes: Vec<u8> = Vec::new();
+    com.serialize_uncompressed(&mut com_as_bytes).unwrap();
+    println!("com_as_bytes: {:?}", com_as_bytes);
+
+    (*state).db.update(index as usize, &com_as_bytes);
+    (*state).num_coins += 1;
+
+    drop(state);
+
+    "success".to_string()
+}
+
+// mirrors the logic on L1 contract, but stores the entire state (rather than frontier)
+async fn process_payment_tx(
+    global_state: web::Data<GlobalAppState>,
+    proof: web::Json<protocol::GrothProofBs58>
+) -> String {
+
+    let (_, vk) = apps::swap::circuit_setup();
+
+    let now = Instant::now();
+
+    let (groth_proof, public_inputs) = 
+        protocol::groth_proof_from_bs58(&proof.into_inner());
+
+    let valid_proof = Groth16::<BW6_761>::verify(
+        &vk,
+        &public_inputs,
+        &groth_proof
+    ).unwrap();
+    assert!(valid_proof);
+
+    println!("proof verified in {}.{} secs", 
+        now.elapsed().as_secs(),
+        now.elapsed().subsec_millis()
+    );
+
+    let mut state = global_state.state.lock().unwrap();
+
+    // let's add all the output coins to the state
+    let index: u32 = (*state).num_coins;
+    let com = public_inputs[PaymentGrothPublicInput::COMMITMENT as usize];
 
     let mut com_as_bytes: Vec<u8> = Vec::new();
     com.serialize_uncompressed(&mut com_as_bytes).unwrap();
@@ -123,10 +170,11 @@ async fn main() -> std::io::Result<()> {
         // move counter into the closure
         App::new()
             .app_data(app_state.clone()) // <- register the created data
-            .route("/payment", web::post().to(verify_payment_tx))
-            .route("/getmerkleproof", web::get().to(get_merkle_proof))
+            .route("/onramp", web::post().to(process_onramp_tx))
+            .route("/payment", web::post().to(process_payment_tx))
+            .route("/merkle", web::get().to(serve_merkle_proof_request))
     })
-    .bind(("127.0.0.1", 8082))?
+    .bind(("127.0.0.1", 8080))?
     .run()
     .await
 }

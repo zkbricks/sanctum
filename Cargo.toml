@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
   "contracts/*",
-  "services/*",
+  "services/sequencer",
+  "services/client"
 ]
 
 [workspace.dependencies]
