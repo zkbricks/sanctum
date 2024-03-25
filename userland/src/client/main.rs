@@ -1,4 +1,3 @@
-use lib_mpc_zexe::vector_commitment::bytes::sha256::JZVectorCommitmentOpeningProof;
 use reqwest::Client;
 
 use ark_ff::{*};
@@ -6,9 +5,9 @@ use ark_ff::{*};
 use lib_mpc_zexe::coin::*;
 use lib_mpc_zexe::record_commitment::sha256::*;
 use lib_mpc_zexe::protocol as protocol;
+use lib_mpc_zexe::vector_commitment::bytes::sha256::JZVectorCommitmentOpeningProof;
 
-mod onramp_circuit;
-mod payment_circuit;
+use lib_sanctum::{payment_circuit, onramp_circuit, utils};
 
 async fn request_merkle_proof(index: usize)
 -> reqwest::Result<JZVectorCommitmentOpeningProof<Vec<u8>>> {
@@ -59,11 +58,17 @@ async fn submit_payment_transaction(item: protocol::GrothProofBs58) -> reqwest::
 
 #[tokio::main]
 async fn main() -> reqwest::Result<()> {
-    //parse_args();
+    let (onramp_pk, _) = utils::read_groth_key_from_file(
+        "/tmp/sanctum/onramp.pk",
+        "/tmp/sanctum/onramp.vk"
+    );
 
-    let (payment_pk, _) = payment_circuit::circuit_setup();
-    let (onramp_pk, _) = onramp_circuit::circuit_setup();
+    let (payment_pk, _) = utils::read_groth_key_from_file(
+        "/tmp/sanctum/payment.pk",
+        "/tmp/sanctum/payment.vk"
+    );
 
+    println!("submitting on-ramp tx...");
     submit_onramp_transaction( {
         let groth_proof = onramp_circuit::generate_groth_proof(
             &onramp_pk,
@@ -72,8 +77,10 @@ async fn main() -> reqwest::Result<()> {
         protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
     }).await?;
 
+    println!("requesting merkle path...");
     let alice_merkle_proof = request_merkle_proof(0).await?;
 
+    println!("submitting payment tx...");
     submit_payment_transaction( {
         let groth_proof = payment_circuit::generate_groth_proof(
             &payment_pk,

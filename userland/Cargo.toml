@@ -1,11 +1,25 @@
 [package]
-name = "sanctum_sequencer"
+name = "sanctum_client"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+
+[lib]
+name = "lib_sanctum"
+path = "src/circuits/lib.rs"
+
 [[bin]]
 name = "sequencer"
-path = "src/main.rs"
+path = "src/services/sequencer/main.rs"
+
+[[bin]]
+name = "client"
+path = "src/client/main.rs"
+
+[[bin]]
+name = "setup"
+path = "src/setup/main.rs"
 
 [profile.test]
 opt-level = 3

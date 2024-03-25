@@ -15,8 +15,8 @@ use lib_mpc_zexe::vector_commitment::bytes::sha256::{
     JZVectorCommitmentParams
 };
 
-use lib_mpc_zexe::apps;
 use lib_mpc_zexe::protocol::{self as protocol};
+use lib_sanctum::utils;
 
 // define the depth of the merkle tree as a constant
 const MERKLE_TREE_LEVELS: u32 = 15;
@@ -76,7 +76,10 @@ async fn process_onramp_tx(
     proof: web::Json<protocol::GrothProofBs58>
 ) -> String {
 
-    let (_, vk) = apps::swap::circuit_setup();
+    let (_, vk) = utils::read_groth_key_from_file(
+        "/tmp/sanctum/onramp.pk",
+        "/tmp/sanctum/onramp.vk"
+    );
 
     let now = Instant::now();
 
@@ -99,7 +102,7 @@ async fn process_onramp_tx(
 
     // let's add all the output coins to the state
     let index: u32 = (*state).num_coins;
-    let com = public_inputs[PaymentGrothPublicInput::COMMITMENT as usize];
+    let com = public_inputs[OnrampGrothPublicInput::COMMITMENT as usize];
 
     let mut com_as_bytes: Vec<u8> = Vec::new();
     com.serialize_uncompressed(&mut com_as_bytes).unwrap();
@@ -119,7 +122,10 @@ async fn process_payment_tx(
     proof: web::Json<protocol::GrothProofBs58>
 ) -> String {
 
-    let (_, vk) = apps::swap::circuit_setup();
+    let (_, vk) = utils::read_groth_key_from_file(
+        "/tmp/sanctum/onramp.pk",
+        "/tmp/sanctum/onramp.vk"
+    );
 
     let now = Instant::now();
 
