@@ -2,7 +2,6 @@ use reqwest::Client;
 
 use ark_ff::{*};
 
-use lib_mpc_zexe::coin::*;
 use lib_mpc_zexe::record_commitment::sha256::*;
 use lib_mpc_zexe::protocol as protocol;
 use lib_mpc_zexe::vector_commitment::bytes::sha256::JZVectorCommitmentOpeningProof;
@@ -128,38 +127,32 @@ fn create_array(input: u8) -> [u8; 31] {
     arr
 }
 
-fn alice_on_ramp_coin() -> JZRecord<8> {
-    let fields: [Vec<u8>; 8] = 
+fn alice_on_ramp_coin() -> JZRecord<5> {
+    let fields: [Vec<u8>; 5] = 
     [
-        vec![0u8; 31],
+        vec![0u8; 31], //entropy
         alice_key().1.to_vec(), //owner
         create_array(1u8).to_vec(), //asset id
         create_array(10u8).to_vec(), //amount
-        vec![AppId::OWNED as u8], //app id
-        vec![0u8; 31],
-        vec![0u8; 31],
         vec![0u8; 31],
     ];
 
-    JZRecord::<8>::new(&fields, &[0u8; 31].to_vec())
+    JZRecord::<5>::new(&fields, &[0u8; 31].to_vec())
 }
 
-fn alice_input_coin() -> JZRecord<8> {
+fn alice_input_coin() -> JZRecord<5> {
     alice_on_ramp_coin()
 }
 
-fn alice_output_coin() -> JZRecord<8> {
-    let fields: [Vec<u8>; 8] = 
+fn alice_output_coin() -> JZRecord<5> {
+    let fields: [Vec<u8>; 5] = 
     [
-        vec![0u8; 31],
+        vec![0u8; 31], //entropy
         bob_key().1.to_vec(), //owner
         create_array(1u8).to_vec(), //asset id
         create_array(10u8).to_vec(), //amount
-        vec![AppId::OWNED as u8], //app id
-        vec![0u8; 31],
-        vec![0u8; 31],
-        vec![0u8; 31],
+        vec![0u8; 31], //rho
     ];
 
-    JZRecord::<8>::new(&fields, &[0u8; 31].to_vec())
+    JZRecord::<5>::new(&fields, &[0u8; 31].to_vec())
 }

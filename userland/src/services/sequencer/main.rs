@@ -19,7 +19,7 @@ use lib_mpc_zexe::protocol::{self as protocol};
 use lib_sanctum::utils;
 
 // define the depth of the merkle tree as a constant
-const MERKLE_TREE_LEVELS: u32 = 15;
+const MERKLE_TREE_LEVELS: u32 = 2;
 
 const ROOT_HISTORY_SIZE: u32 = 30;
 

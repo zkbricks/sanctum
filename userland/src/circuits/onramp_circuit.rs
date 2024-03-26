@@ -11,8 +11,8 @@ use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_snark::SNARK;
 
 use lib_mpc_zexe::record_commitment::sha256::{*, constraints::*};
-use lib_mpc_zexe::coin::*;
 use lib_mpc_zexe::utils;
+use super::{AMOUNT, ASSET_ID};
 
 // Finite Field used to encode the zk circuit
 type ConstraintF = ark_bw6_761::Fr;
@@ -31,7 +31,7 @@ pub enum GrothPublicInput {
 /// being claimed by the client.
 pub struct OnRampCircuit {
     /// all fields of the utxo is a secret witness in the proof generation
-    pub unspent_utxo: JZRecord<8>,
+    pub unspent_utxo: JZRecord<5>,
 }
 
 /// ConstraintSynthesizer is a trait that is implemented for the OnRampCircuit;
@@ -70,7 +70,7 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
         
         let unspent_utxo_record = self.unspent_utxo.borrow();
 
-        let unspent_utxo_var = JZRecordVar::<8>::new_witness(
+        let unspent_utxo_var = JZRecordVar::<5>::new_witness(
             cs.clone(),
             || Ok(unspent_utxo_record)
         ).unwrap();
@@ -119,6 +119,10 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
             unspent_utxo_var.fields[ASSET_ID][i].enforce_equal(&assetid_inputvar_bytes[i])?;
         }
 
+        println!("number of constraints: {}", cs.num_constraints());
+        println!("number of witness vars: {}", cs.num_witness_variables());
+        println!("number of input vars: {}", cs.num_instance_variables());
+
         Ok(())
     }
 }
@@ -129,20 +133,17 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
     let circuit = {
         
         // our dummy witness is a coin with all fields set to zero
-        let fields: [Vec<u8>; 8] = 
+        let fields: [Vec<u8>; 5] = 
         [
             vec![0u8; 31], //entropy
             vec![0u8; 31], //owner
             vec![0u8; 31], //asset id
             vec![0u8; 31], //amount
-            vec![AppId::OWNED as u8], //app id
-            vec![0u8; 31],
-            vec![0u8; 31],
-            vec![0u8; 31],
+            vec![0u8; 31], //rho
         ];
 
         // let's create our dummy coin out of the above zeroed fields
-        let coin = JZRecord::<8>::new(&fields, &[0u8; 31].into());
+        let coin = JZRecord::<5>::new(&fields, &[0u8; 31].into());
     
         OnRampCircuit { unspent_utxo: coin.clone() }
     };
@@ -159,7 +160,7 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
 
 pub fn generate_groth_proof(
     pk: &ProvingKey<BW6_761>,
-    unspent_coin: &JZRecord<8>,
+    unspent_coin: &JZRecord<5>,
 ) -> (Proof<BW6_761>, Vec<ConstraintF>) {
 
     let circuit = OnRampCircuit { unspent_utxo: unspent_coin.clone() };

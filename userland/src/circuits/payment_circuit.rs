@@ -14,11 +14,15 @@ use lib_mpc_zexe::vector_commitment;
 use lib_mpc_zexe::vector_commitment::bytes::sha256::{*, constraints::*};
 use lib_mpc_zexe::record_commitment::sha256::{*, constraints::*};
 use lib_mpc_zexe::prf::{*, constraints::*};
-use lib_mpc_zexe::coin::*;
 use lib_mpc_zexe::utils;
+
+use super::{AMOUNT, ASSET_ID, RHO, OWNER};
 
 // Finite Field used to encode the zk circuit
 type ConstraintF = ark_bw6_761::Fr;
+
+// define the depth of the merkle tree as a constant
+const MERKLE_TREE_LEVELS: u32 = 2;
 
 // the public inputs in the Groth proof are ordered as follows
 #[allow(non_camel_case_types, unused)]
@@ -40,10 +44,10 @@ pub struct PaymentCircuit {
      pub vc_params: JZVectorCommitmentParams,
 
     /// all fields of the input utxo, for the asset owned by the sender
-    pub input_utxo: JZRecord<8>,
+    pub input_utxo: JZRecord<5>,
 
     // all fields of the output utxo listing recepient as the owner
-    pub output_utxo: JZRecord<8>,
+    pub output_utxo: JZRecord<5>,
 
     /// secret key for proving ownership of the spent coin
     pub sk: [u8; 32],
@@ -77,7 +81,7 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
 
         let input_utxo_record = self.input_utxo.borrow();
 
-        let input_utxo_var = JZRecordVar::<8>::new_witness(
+        let input_utxo_var = JZRecordVar::<5>::new_witness(
             cs.clone(),
             || Ok(input_utxo_record)
         ).unwrap();
@@ -92,7 +96,7 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         
         let output_utxo_record = self.output_utxo.borrow();
 
-        let output_utxo_var = JZRecordVar::<8>::new_witness(
+        let output_utxo_var = JZRecordVar::<5>::new_witness(
             cs.clone(),
             || Ok(output_utxo_record)
         ).unwrap();
@@ -248,28 +252,26 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             });
         }
 
+        println!("number of constraints: {}", cs.num_constraints());
+        println!("number of witness vars: {}", cs.num_witness_variables());
+        println!("number of input vars: {}", cs.num_instance_variables());
+
         Ok(())
     }
 }
 
-fn get_dummy_utxo() -> JZRecord<8> {
-    let fields: [Vec<u8>; 8] = 
+fn get_dummy_utxo() -> JZRecord<5> {
+    let fields: [Vec<u8>; 5] = 
     [
-        vec![0u8; 31],
+        vec![0u8; 31], //entropy
         vec![0u8; 31], //owner
         vec![0u8; 31], //asset id
         vec![0u8; 31], //amount
-        vec![AppId::OWNED as u8], //app id
-        vec![0u8; 31],
-        vec![0u8; 31],
-        vec![0u8; 31],
+        vec![0u8; 31], //rho
     ];
 
-    JZRecord::<8>::new(&fields, &[0u8; 31].into())
+    JZRecord::<5>::new(&fields, &[0u8; 31].into())
 }
-
-// define the depth of the merkle tree as a constant
-const MERKLE_TREE_LEVELS: u32 = 15;
 
 pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
 
@@ -319,8 +321,8 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
 
 pub fn generate_groth_proof(
     pk: &ProvingKey<BW6_761>,
-    input_utxo: &JZRecord<8>,
-    output_utxo: &JZRecord<8>,
+    input_utxo: &JZRecord<5>,
+    output_utxo: &JZRecord<5>,
     unspent_coin_existence_proof: &JZVectorCommitmentOpeningProof<Vec<u8>>,
     sk: &[u8; 32]
 ) -> (Proof<BW6_761>, Vec<ConstraintF>) {
