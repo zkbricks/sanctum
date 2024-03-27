@@ -5,6 +5,24 @@ use ark_serialize::*;
 use ark_groth16::*;
 use ark_bw6_761::{*};
 
+use lib_mpc_zexe::prf::JZPRFParams;
+use lib_mpc_zexe::record_commitment::kzg::JZKZGCommitmentParams;
+use lib_mpc_zexe::vector_commitment::bytes::pedersen::JZVectorCommitmentParams;
+use rand::SeedableRng;
+
+
+pub fn trusted_setup<const N: usize>() -> (JZPRFParams, JZVectorCommitmentParams, JZKZGCommitmentParams<N>) {
+    let seed = [0u8; 32];
+    let mut rng = rand_chacha::ChaCha8Rng::from_seed(seed);
+
+    // TODO: for now we sample the public parameters directly;
+    // we should change this to load from a file produced by a trusted setup
+    let prf_params = JZPRFParams::trusted_setup(&mut rng);
+    let vc_params = JZVectorCommitmentParams::trusted_setup(&mut rng);
+    let crs = JZKZGCommitmentParams::<N>::trusted_setup(&mut rng);
+
+    (prf_params, vc_params, crs)
+}
 
 pub fn write_groth_key_to_file(
     pk: &ProvingKey<BW6_761>,

@@ -2,14 +2,14 @@ use reqwest::Client;
 
 use ark_ff::{*};
 
-use lib_mpc_zexe::record_commitment::sha256::*;
+use lib_mpc_zexe::record_commitment::kzg::*;
 use lib_mpc_zexe::protocol as protocol;
-use lib_mpc_zexe::vector_commitment::bytes::sha256::JZVectorCommitmentOpeningProof;
+use lib_mpc_zexe::vector_commitment::bytes::pedersen::JZVectorCommitmentOpeningProof;
 
 use lib_sanctum::{payment_circuit, onramp_circuit, utils};
 
 async fn request_merkle_proof(index: usize)
--> reqwest::Result<JZVectorCommitmentOpeningProof<Vec<u8>>> {
+-> reqwest::Result<JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>> {
     let client = Client::new();
     let response = client.get("http://127.0.0.1:8080/merkle")
         .json(&index)
@@ -18,7 +18,7 @@ async fn request_merkle_proof(index: usize)
         .text()
         .await?;
 
-    Ok(protocol::sha2_vector_commitment_opening_proof_from_bs58(
+    Ok(protocol::jubjub_vector_commitment_opening_proof_from_bs58(
         &serde_json::from_str(&response).unwrap())
     )
 }
@@ -128,6 +128,8 @@ fn create_array(input: u8) -> [u8; 31] {
 }
 
 fn alice_on_ramp_coin() -> JZRecord<5> {
+    let (_, _, crs) = utils::trusted_setup();
+
     let fields: [Vec<u8>; 5] = 
     [
         vec![0u8; 31], //entropy
@@ -137,7 +139,7 @@ fn alice_on_ramp_coin() -> JZRecord<5> {
         vec![0u8; 31],
     ];
 
-    JZRecord::<5>::new(&fields, &[0u8; 31].to_vec())
+    JZRecord::<5>::new(&crs, &fields, &[0u8; 31].to_vec())
 }
 
 fn alice_input_coin() -> JZRecord<5> {
@@ -145,6 +147,8 @@ fn alice_input_coin() -> JZRecord<5> {
 }
 
 fn alice_output_coin() -> JZRecord<5> {
+    let (_, _, crs) = utils::trusted_setup();
+    
     let fields: [Vec<u8>; 5] = 
     [
         vec![0u8; 31], //entropy
@@ -154,5 +158,5 @@ fn alice_output_coin() -> JZRecord<5> {
         vec![0u8; 31], //rho
     ];
 
-    JZRecord::<5>::new(&fields, &[0u8; 31].to_vec())
+    JZRecord::<5>::new(&crs, &fields, &[0u8; 31].to_vec())
 }

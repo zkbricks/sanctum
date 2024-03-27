@@ -2,6 +2,7 @@ use std::cmp::min;
 use rand_chacha::rand_core::SeedableRng;
 use std::borrow::Borrow;
 
+use ark_ec::*;
 use ark_ff::*;
 use ark_bw6_761::{*};
 use ark_r1cs_std::prelude::*;
@@ -11,12 +12,12 @@ use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_snark::SNARK;
 
 use lib_mpc_zexe::vector_commitment;
-use lib_mpc_zexe::vector_commitment::bytes::sha256::{*, constraints::*};
-use lib_mpc_zexe::record_commitment::sha256::{*, constraints::*};
+use lib_mpc_zexe::vector_commitment::bytes::pedersen::{*, constraints::*};
+use lib_mpc_zexe::record_commitment::kzg::{*, constraints::*};
 use lib_mpc_zexe::prf::{*, constraints::*};
-use lib_mpc_zexe::utils;
 
 use super::{AMOUNT, ASSET_ID, RHO, OWNER};
+use super::utils;
 
 // Finite Field used to encode the zk circuit
 type ConstraintF = ark_bw6_761::Fr;
@@ -27,9 +28,11 @@ const MERKLE_TREE_LEVELS: u32 = 2;
 // the public inputs in the Groth proof are ordered as follows
 #[allow(non_camel_case_types, unused)]
 pub enum GrothPublicInput {
-    ROOT = 0, // merkle root for proving membership of input utxo
-    NULLIFIER = 1, // commitment of output utxo
-    COMMITMENT = 2, // nullifier to the input utxo
+    COMMITMENT_X = 0, // commitment to the output utxo
+    COMMITMENT_Y = 1, // commitment to the output utxo
+    NULLIFIER = 2, // nullifier of input utxo
+    ROOT_X = 3, // merkle root for proving membership of input utxo
+    ROOT_Y = 4, // merkle root for proving membership of input utxo
 }
 
 
@@ -37,6 +40,9 @@ pub enum GrothPublicInput {
 /// during the on-ramp process commits to the amount and asset_id
 /// being claimed by the client.
 pub struct PaymentCircuit {
+    /// public parameters (CRS) for the KZG commitment scheme
+    pub crs: JZKZGCommitmentParams<5>,
+
     /// public parameters for the PRF evaluation
     pub prf_params: JZPRFParams,
 
@@ -53,7 +59,7 @@ pub struct PaymentCircuit {
     pub sk: [u8; 32],
 
     /// Merkle opening proof for proving existence of the unspent coin
-    pub unspent_coin_existence_proof: JZVectorCommitmentOpeningProof<Vec<u8>>,
+    pub unspent_coin_existence_proof: JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>,
 }
 
 /// ConstraintSynthesizer is a trait that is implemented for the OnRampCircuit;
@@ -65,6 +71,13 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         self,
         cs: ConstraintSystemRef<ConstraintF>,
     ) -> Result<()> {
+
+        // we need a constant in our spending circuit for the crs,
+        // so let's grab it from some coins (all coins use the same crs)
+        let crs_var = JZKZGCommitmentParamsVar::<5>::new_constant(
+            cs.clone(),
+            self.crs
+        ).unwrap();
 
         // PRF makes use of public parameters, so we make them constant
         let prf_params_var = JZPRFParamsVar::new_constant(
@@ -86,24 +99,41 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             || Ok(input_utxo_record)
         ).unwrap();
 
-        // trigger constraint generation to compute the SHA256 commitment
-        lib_mpc_zexe::record_commitment::sha256::constraints::generate_constraints(
+        // fire off the constraint generation which will include the 
+        // circuitry to compute the KZG commitment
+        lib_mpc_zexe::record_commitment::kzg::constraints::generate_constraints(
             cs.clone(),
+            &crs_var,
             &input_utxo_var
         ).unwrap();
 
         //--------------- knowledge of opening of output UTXO commitment ------------------
         
         let output_utxo_record = self.output_utxo.borrow();
+        let output_utxo_commitment = output_utxo_record.commitment().into_affine();
 
         let output_utxo_var = JZRecordVar::<5>::new_witness(
             cs.clone(),
             || Ok(output_utxo_record)
         ).unwrap();
 
-        // trigger constraint generation to compute the SHA256 commitment
-        lib_mpc_zexe::record_commitment::sha256::constraints::generate_constraints(
+        // a commitment is an (affine) group element so we separately 
+        // expose the x and y coordinates, computed below
+        let output_utxo_commitment_x_input_var = ark_bls12_377::constraints::FqVar::new_input(
+            ark_relations::ns!(cs, "output_commitment_x"), 
+            || { Ok(output_utxo_commitment.x) },
+        ).unwrap();
+
+        let output_utxo_commitment_y_input_var = ark_bls12_377::constraints::FqVar::new_input(
+            ark_relations::ns!(cs, "output_commitment_y"), 
+            || { Ok(output_utxo_commitment.y) },
+        ).unwrap();
+
+        // fire off the constraint generation which will include the 
+        // circuitry to compute the KZG commitment
+        lib_mpc_zexe::record_commitment::kzg::constraints::generate_constraints(
             cs.clone(),
+            &crs_var,
             &output_utxo_var
         ).unwrap();
 
@@ -117,7 +147,10 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             &self.prf_params, self.input_utxo.fields[RHO].as_slice(), &self.sk
         );
 
-        let nullifier = prf_instance_nullifier.evaluate();
+        let nullifier_inputvar = ark_bls12_377::constraints::FqVar::new_input(
+            ark_relations::ns!(cs, "nullifier"), 
+            || Ok(lib_mpc_zexe::utils::bytes_to_field::<ConstraintF, 6>(&prf_instance_nullifier.evaluate())),
+        ).unwrap();
 
         let nullifier_prf_instance_var = JZPRFInstanceVar::new_witness(
             cs.clone(),
@@ -165,31 +198,23 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             || Ok(&self.unspent_coin_existence_proof)
         ).unwrap();
 
+        let root_x_inputvar = ark_bls12_377::constraints::FqVar::new_input(
+            ark_relations::ns!(cs, "input_root_x"), 
+            || { Ok(self.unspent_coin_existence_proof.root.x) },
+        ).unwrap();
+
+        let root_y_inputvar = ark_bls12_377::constraints::FqVar::new_input(
+            ark_relations::ns!(cs, "input_root_y"), 
+            || { Ok(self.unspent_coin_existence_proof.root.y) },
+        ).unwrap();
+
         // generate the merkle proof verification circuitry
-        vector_commitment::bytes::sha256::constraints::generate_constraints(
+        vector_commitment::bytes::pedersen::constraints::generate_constraints(
             cs.clone(), &merkle_params_var, &proof_var
         );
 
-        //--------------- Declare all the input variables ------------------
-
-        let root_inputvar = ark_bls12_377::constraints::FqVar::new_input(
-            ark_relations::ns!(cs, "root"), 
-            || { Ok(utils::bytes_to_field::<ConstraintF, 6>(&self.unspent_coin_existence_proof.root)) },
-        ).unwrap();
-
-        // allocate the nullifier as an input variable in the statement
-        let nullifier_inputvar = ark_bls12_377::constraints::FqVar::new_input(
-            ark_relations::ns!(cs, "nullifier"), 
-            || Ok(utils::bytes_to_field::<ConstraintF, 6>(&nullifier)),
-        ).unwrap();
-
-        // a commitment is an (affine) group element so we separately 
-        // expose the x and y coordinates, computed below
-        let output_utxo_commitment_inputvar = ark_bls12_377::constraints::FqVar::new_input(
-            ark_relations::ns!(cs, "commitment"), 
-            || { Ok(utils::bytes_to_field::<ConstraintF, 6>(&output_utxo_record.commitment())) },
-        ).unwrap();
-
+        proof_var.root_var.x.enforce_equal(&root_x_inputvar)?;
+        proof_var.root_var.y.enforce_equal(&root_y_inputvar)?;
 
         //--------------- Binding all circuit gadgets together ------------------
 
@@ -217,16 +242,25 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         }
 
         // 5. constrain the output utxo commitment in the statement to equal the computed commitment output
-        let output_utxo_commitment_byte_vars: Vec::<UInt8<ConstraintF>> = output_utxo_commitment_inputvar
+        let output_utxo_commitment_x_byte_vars: Vec::<UInt8<ConstraintF>> = output_utxo_commitment_x_input_var
             .to_bytes()?
             .to_vec();
-        for (i, byte_var) in output_utxo_var.commitment.0.iter().enumerate() {
-            byte_var.enforce_equal(&output_utxo_commitment_byte_vars[i])?;
+        for (i, byte_var) in output_utxo_var.commitment.to_affine()?.x.to_bytes()?.iter().enumerate() {
+            byte_var.enforce_equal(&output_utxo_commitment_x_byte_vars[i])?;
+        }
+
+        let output_utxo_commitment_y_byte_vars: Vec::<UInt8<ConstraintF>> = output_utxo_commitment_y_input_var
+            .to_bytes()?
+            .to_vec();
+        for (i, byte_var) in output_utxo_var.commitment.to_affine()?.y.to_bytes()?.iter().enumerate() {
+            byte_var.enforce_equal(&output_utxo_commitment_y_byte_vars[i])?;
         }
 
         // 6. does the leaf node in the merkle proof equal the input utxo commitment?
         let input_utxo_commitment_byte_vars: Vec::<UInt8<ConstraintF>> = input_utxo_var
             .commitment // grab the commitment variable
+            .to_affine()? // convert it to an affine point
+            .x
             .to_bytes()?; // let's use arkworks' to_bytes gadget
         // constrain equality w.r.t. to the leaf node, byte by byte
         for (i, byte_var) in input_utxo_commitment_byte_vars.iter().enumerate() {
@@ -235,8 +269,8 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         }
 
         // 7. does the proof use the same root as what is declared in the statement?
-        let root_var_bytes = root_inputvar.to_bytes()?;
-        let proof_var_root_var_bytes = proof_var.root_var.to_bytes()?;
+        let root_var_bytes = root_x_inputvar.to_bytes()?;
+        let proof_var_root_var_bytes = proof_var.root_var.x.to_bytes()?;
         for i in 0..min(root_var_bytes.len(), proof_var_root_var_bytes.len()) {
             root_var_bytes[i].enforce_equal(&proof_var_root_var_bytes[i])?;
         }
@@ -260,7 +294,7 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
     }
 }
 
-fn get_dummy_utxo() -> JZRecord<5> {
+fn get_dummy_utxo(crs: &JZKZGCommitmentParams<5>) -> JZRecord<5> {
     let fields: [Vec<u8>; 5] = 
     [
         vec![0u8; 31], //entropy
@@ -270,28 +304,26 @@ fn get_dummy_utxo() -> JZRecord<5> {
         vec![0u8; 31], //rho
     ];
 
-    JZRecord::<5>::new(&fields, &[0u8; 31].into())
+    JZRecord::<5>::new(crs, &fields, &[0u8; 31].into())
 }
 
 pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
 
-    let seed = [0u8; 32];
-    let mut rng = rand_chacha::ChaCha8Rng::from_seed(seed);
+
+    let (prf_params, vc_params, crs) = utils::trusted_setup();
 
     // create a circuit with a dummy witness
     let circuit = {
-        let vc_params = JZVectorCommitmentParams::trusted_setup(&mut rng);
-        let prf_params = JZPRFParams::trusted_setup(&mut rng);
     
         // let's create the universe of dummy utxos
         let mut records = Vec::new();
         for _ in 0..(1 << MERKLE_TREE_LEVELS) {
-            records.push(get_dummy_utxo().commitment());
+            records.push(get_dummy_utxo(&crs).commitment().into_affine());
         }
     
         // let's create a database of coins, and generate a merkle proof
         // we need this in order to create a circuit with appropriate public inputs
-        let db = JZVectorDB::<Vec<u8>>::new(&vc_params, &records);
+        let db = JZVectorDB::<ark_bls12_377::G1Affine>::new(&vc_params, &records[..]);
         let merkle_proof = JZVectorCommitmentOpeningProof {
             root: db.commitment(),
             record: db.get_record(0).clone(),
@@ -300,11 +332,12 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
 
         // note that circuit setup does not care about the values of witness variables
         PaymentCircuit {
+            crs: crs.clone(),
             prf_params: prf_params,
             vc_params: vc_params,
             sk: [0u8; 32],
-            input_utxo: get_dummy_utxo(), // doesn't matter what value the coin has
-            output_utxo: get_dummy_utxo(), // again, doesn't matter what value
+            input_utxo: get_dummy_utxo(&crs), // doesn't matter what value the coin has
+            output_utxo: get_dummy_utxo(&crs), // again, doesn't matter what value
             unspent_coin_existence_proof: merkle_proof,
         }
     };
@@ -323,29 +356,18 @@ pub fn generate_groth_proof(
     pk: &ProvingKey<BW6_761>,
     input_utxo: &JZRecord<5>,
     output_utxo: &JZRecord<5>,
-    unspent_coin_existence_proof: &JZVectorCommitmentOpeningProof<Vec<u8>>,
+    unspent_coin_existence_proof: &JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>,
     sk: &[u8; 32]
 ) -> (Proof<BW6_761>, Vec<ConstraintF>) {
 
-    let seed = [0u8; 32];
-    let mut rng = rand_chacha::ChaCha8Rng::from_seed(seed);
+    let (prf_params, vc_params, crs) = utils::trusted_setup();
 
-    let vc_params = JZVectorCommitmentParams::trusted_setup(&mut rng);
-    let prf_params = JZPRFParams::trusted_setup(&mut rng);
-
-    let root = utils::bytes_to_field::<ConstraintF, 6>(
-        &unspent_coin_existence_proof.root
-    );
-
-    let nullifier = utils::bytes_to_field::<ConstraintF, 6>(
+    let nullifier = lib_mpc_zexe::utils::bytes_to_field::<ConstraintF, 6>(
         &JZPRFInstance::new(&prf_params, input_utxo.fields[RHO].as_slice(), sk).evaluate()
     );
 
-    let commitment = utils::bytes_to_field::<ConstraintF, 6>(
-        &output_utxo.commitment()
-    );
-
     let circuit = PaymentCircuit {
+        crs: crs,
         prf_params: prf_params,
         vc_params: vc_params,
         sk: *sk,
@@ -356,14 +378,18 @@ pub fn generate_groth_proof(
     
     // arrange the public inputs based on the GrothPublicInput enum definition
     // pub enum GrothPublicInput {
-    //     ROOT = 0, // merkle root for proving membership of input utxo
-    //     NULLIFIER = 1, // commitment of output utxo
-    //     COMMITMENT = 2, // nullifier to the input utxo
+    //     COMMITMENT_X = 0, // commitment to the output utxo
+    //     COMMITMENT_Y = 1, // commitment to the output utxo
+    //     NULLIFIER = 2, // nullifier of input utxo
+    //     ROOT_X = 3, // merkle root for proving membership of input utxo
+    //     ROOT_Y = 4, // merkle root for proving membership of input utxo
     // }
     let public_inputs: Vec<ConstraintF> = vec![
-        root,
+        output_utxo.commitment().into_affine().x,
+        output_utxo.commitment().into_affine().y,
         nullifier,
-        commitment
+        unspent_coin_existence_proof.root.x,
+        unspent_coin_existence_proof.root.y
     ];
 
     let seed = [0u8; 32];
