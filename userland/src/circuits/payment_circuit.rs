@@ -22,7 +22,7 @@ use super::{AMOUNT, ASSET_ID, RHO, OWNER};
 type ConstraintF = ark_bw6_761::Fr;
 
 // define the depth of the merkle tree as a constant
-const MERKLE_TREE_LEVELS: u32 = 2;
+const MERKLE_TREE_LEVELS: u32 = 8;
 
 // the public inputs in the Groth proof are ordered as follows
 #[allow(non_camel_case_types, unused)]
@@ -86,7 +86,7 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             || Ok(input_utxo_record)
         ).unwrap();
 
-        // trigger constraint generation to compute the SHA256 commitment
+        //trigger constraint generation to compute the SHA256 commitment
         lib_mpc_zexe::record_commitment::sha256::constraints::generate_constraints(
             cs.clone(),
             &input_utxo_var
@@ -165,7 +165,7 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             || Ok(&self.unspent_coin_existence_proof)
         ).unwrap();
 
-        // generate the merkle proof verification circuitry
+        // //generate the merkle proof verification circuitry
         vector_commitment::bytes::sha256::constraints::generate_constraints(
             cs.clone(), &merkle_params_var, &proof_var
         );
@@ -177,14 +177,14 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             || { Ok(utils::bytes_to_field::<ConstraintF, 6>(&self.unspent_coin_existence_proof.root)) },
         ).unwrap();
 
-        // allocate the nullifier as an input variable in the statement
+        // // allocate the nullifier as an input variable in the statement
         let nullifier_inputvar = ark_bls12_377::constraints::FqVar::new_input(
             ark_relations::ns!(cs, "nullifier"), 
             || Ok(utils::bytes_to_field::<ConstraintF, 6>(&nullifier)),
         ).unwrap();
 
-        // a commitment is an (affine) group element so we separately 
-        // expose the x and y coordinates, computed below
+        // // a commitment is an (affine) group element so we separately 
+        // // expose the x and y coordinates, computed below
         let output_utxo_commitment_inputvar = ark_bls12_377::constraints::FqVar::new_input(
             ark_relations::ns!(cs, "commitment"), 
             || { Ok(utils::bytes_to_field::<ConstraintF, 6>(&output_utxo_record.commitment())) },
@@ -228,6 +228,8 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         let input_utxo_commitment_byte_vars: Vec::<UInt8<ConstraintF>> = input_utxo_var
             .commitment // grab the commitment variable
             .to_bytes()?; // let's use arkworks' to_bytes gadget
+        println!("input_utxo_commitment_byte_vars.len: {:?}", input_utxo_commitment_byte_vars.len());
+        println!("proof_var.leaf_var.len: {:?}", proof_var.leaf_var.len());
         // constrain equality w.r.t. to the leaf node, byte by byte
         for (i, byte_var) in input_utxo_commitment_byte_vars.iter().enumerate() {
             // the serialization impl for CanonicalSerialize does x first
@@ -251,10 +253,6 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
                 input_byte.enforce_equal(output_byte).unwrap();
             });
         }
-
-        println!("number of constraints: {}", cs.num_constraints());
-        println!("number of witness vars: {}", cs.num_witness_variables());
-        println!("number of input vars: {}", cs.num_instance_variables());
 
         Ok(())
     }
@@ -299,14 +297,20 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
         };
 
         // note that circuit setup does not care about the values of witness variables
-        PaymentCircuit {
+        let circuit = PaymentCircuit {
             prf_params: prf_params,
             vc_params: vc_params,
             sk: [0u8; 32],
             input_utxo: get_dummy_utxo(), // doesn't matter what value the coin has
             output_utxo: get_dummy_utxo(), // again, doesn't matter what value
-            unspent_coin_existence_proof: merkle_proof,
-        }
+            unspent_coin_existence_proof: merkle_proof.clone(),
+        };
+
+        println!("[circuit_setup] merkle_proof root: {:?}", bs58::encode(merkle_proof.root).into_string());
+        println!("[circuit_setup] merkle_proof record: {:?}", bs58::encode(merkle_proof.record).into_string());
+        println!("[circuit_setup] merkle_proof path len: {:?}", merkle_proof.path.auth_path.len());
+
+        circuit
     };
 
     let seed = [0u8; 32];

@@ -119,10 +119,6 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
             unspent_utxo_var.fields[ASSET_ID][i].enforce_equal(&assetid_inputvar_bytes[i])?;
         }
 
-        println!("number of constraints: {}", cs.num_constraints());
-        println!("number of witness vars: {}", cs.num_witness_variables());
-        println!("number of input vars: {}", cs.num_instance_variables());
-
         Ok(())
     }
 }

@@ -6,7 +6,7 @@ use lib_mpc_zexe::record_commitment::sha256::*;
 use lib_mpc_zexe::protocol as protocol;
 use lib_mpc_zexe::vector_commitment::bytes::sha256::JZVectorCommitmentOpeningProof;
 
-use lib_sanctum::{payment_circuit, onramp_circuit, utils};
+use lib_sanctum::{payment_circuit, onramp_circuit};
 
 async fn request_merkle_proof(index: usize)
 -> reqwest::Result<JZVectorCommitmentOpeningProof<Vec<u8>>> {
@@ -18,7 +18,7 @@ async fn request_merkle_proof(index: usize)
         .text()
         .await?;
 
-    Ok(protocol::sha2_vector_commitment_opening_proof_from_bs58(
+    Ok(lib_sanctum::utils::sha2_vector_commitment_opening_proof_from_bs58(
         &serde_json::from_str(&response).unwrap())
     )
 }
@@ -57,15 +57,18 @@ async fn submit_payment_transaction(item: protocol::GrothProofBs58) -> reqwest::
 
 #[tokio::main]
 async fn main() -> reqwest::Result<()> {
-    let (onramp_pk, _) = utils::read_groth_key_from_file(
-        "/tmp/sanctum/onramp.pk",
-        "/tmp/sanctum/onramp.vk"
-    );
+    // let (onramp_pk, _) = utils::read_groth_key_from_file(
+    //     "/tmp/sanctum/onramp.pk",
+    //     "/tmp/sanctum/onramp.vk"
+    // );
 
-    let (payment_pk, _) = utils::read_groth_key_from_file(
-        "/tmp/sanctum/payment.pk",
-        "/tmp/sanctum/payment.vk"
-    );
+    // let (payment_pk, _) = utils::read_groth_key_from_file(
+    //     "/tmp/sanctum/payment.pk",
+    //     "/tmp/sanctum/payment.vk"
+    // );
+
+    let (onramp_pk, _onramp_vk) = onramp_circuit::circuit_setup();
+    let (payment_pk, _payment_vk) = payment_circuit::circuit_setup();
 
     println!("submitting on-ramp tx...");
     submit_onramp_transaction( {
@@ -78,6 +81,8 @@ async fn main() -> reqwest::Result<()> {
 
     println!("requesting merkle path...");
     let alice_merkle_proof = request_merkle_proof(0).await?;
+    println!("[client.main] root: {}", bs58::encode(alice_merkle_proof.clone().root).into_string());
+    println!("[client.main] record: {}", bs58::encode(alice_merkle_proof.clone().record).into_string());
 
     println!("submitting payment tx...");
     submit_payment_transaction( {

@@ -5,6 +5,7 @@ use ark_bw6_761::BW6_761;
 use ark_groth16::*;
 use ark_snark::SNARK;
 use ark_std::test_rng;
+use lib_mpc_zexe::record_commitment::sha256::JZRecord;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -16,10 +17,9 @@ use lib_mpc_zexe::vector_commitment::bytes::sha256::{
 };
 
 use lib_mpc_zexe::protocol::{self as protocol};
-use lib_sanctum::utils;
 
 // define the depth of the merkle tree as a constant
-const MERKLE_TREE_LEVELS: u32 = 2;
+const MERKLE_TREE_LEVELS: u32 = 8;
 
 const ROOT_HISTORY_SIZE: u32 = 30;
 
@@ -39,6 +39,8 @@ pub enum OnrampGrothPublicInput {
 
 
 pub struct AppStateType {
+    onramp_vk: VerifyingKey<BW6_761>,
+    payment_vk: VerifyingKey<BW6_761>,
     db: JZVectorDB<Vec<u8>>, //leaves of sha256 hashes
     merkle_tree_frontier: FrontierMerkleTreeWithHistory,
     num_coins: u32,
@@ -62,11 +64,15 @@ async fn serve_merkle_proof_request(
         path: (*state).db.proof(index),
     };
 
-    drop(state);
-
-    let merkle_proof_bs58 = protocol::sha2_vector_commitment_opening_proof_to_bs58(
+    let merkle_proof_bs58 = lib_sanctum::utils::sha2_vector_commitment_opening_proof_to_bs58(
         &merkle_proof
     );
+
+    println!("[serve_merkle_proof_request] index: {}", index);
+    println!("[serve_merkle_proof_request] root: {}", bs58::encode(merkle_proof.root).into_string());
+    println!("[serve_merkle_proof_request] record: {}", bs58::encode(merkle_proof.record).into_string());
+
+    drop(state);
 
     serde_json::to_string(&merkle_proof_bs58).unwrap()
 }
@@ -76,18 +82,15 @@ async fn process_onramp_tx(
     proof: web::Json<protocol::GrothProofBs58>
 ) -> String {
 
-    let (_, vk) = utils::read_groth_key_from_file(
-        "/tmp/sanctum/onramp.pk",
-        "/tmp/sanctum/onramp.vk"
-    );
-
     let now = Instant::now();
+
+    let mut state = global_state.state.lock().unwrap();
 
     let (groth_proof, public_inputs) = 
         protocol::groth_proof_from_bs58(&proof.into_inner());
 
     let valid_proof = Groth16::<BW6_761>::verify(
-        &vk,
+        &(*state).onramp_vk,
         &public_inputs,
         &groth_proof
     ).unwrap();
@@ -98,18 +101,21 @@ async fn process_onramp_tx(
         now.elapsed().subsec_millis()
     );
 
-    let mut state = global_state.state.lock().unwrap();
-
     // let's add all the output coins to the state
     let index: u32 = (*state).num_coins;
     let com = public_inputs[OnrampGrothPublicInput::COMMITMENT as usize];
 
     let mut com_as_bytes: Vec<u8> = Vec::new();
     com.serialize_uncompressed(&mut com_as_bytes).unwrap();
-    println!("com_as_bytes: {:?}", com_as_bytes);
+    let com_as_bytes = com_as_bytes[0..32].to_vec();
+
+    println!("[process_onramp_tx] record: {}", bs58::encode(&com_as_bytes).into_string());
+    println!("[process_onramp_tx] previous root: {}", bs58::encode(&(*state).db.commitment()).into_string());
 
     (*state).db.update(index as usize, &com_as_bytes);
     (*state).num_coins += 1;
+
+    println!("[process_onramp_tx] new root: {}", bs58::encode(&(*state).db.commitment()).into_string());
 
     drop(state);
 
@@ -122,18 +128,23 @@ async fn process_payment_tx(
     proof: web::Json<protocol::GrothProofBs58>
 ) -> String {
 
-    let (_, vk) = utils::read_groth_key_from_file(
-        "/tmp/sanctum/onramp.pk",
-        "/tmp/sanctum/onramp.vk"
-    );
-
     let now = Instant::now();
+
+    let mut state = global_state.state.lock().unwrap();
 
     let (groth_proof, public_inputs) = 
         protocol::groth_proof_from_bs58(&proof.into_inner());
 
+    println!("[process_payment_tx] current root: {}", bs58::encode(&(*state).db.commitment()).into_string());
+
+    let stmt_root = public_inputs[PaymentGrothPublicInput::ROOT as usize];
+    let mut stmt_root_as_bytes: Vec<u8> = Vec::new();
+    stmt_root.serialize_uncompressed(&mut stmt_root_as_bytes).unwrap();
+    let stmt_root_as_bytes = stmt_root_as_bytes[0..32].to_vec();
+    println!("[process_payment_tx] statement root: {}", bs58::encode(stmt_root_as_bytes).into_string());
+
     let valid_proof = Groth16::<BW6_761>::verify(
-        &vk,
+        &(*state).payment_vk,
         &public_inputs,
         &groth_proof
     ).unwrap();
@@ -144,15 +155,13 @@ async fn process_payment_tx(
         now.elapsed().subsec_millis()
     );
 
-    let mut state = global_state.state.lock().unwrap();
-
     // let's add all the output coins to the state
     let index: u32 = (*state).num_coins;
     let com = public_inputs[PaymentGrothPublicInput::COMMITMENT as usize];
 
     let mut com_as_bytes: Vec<u8> = Vec::new();
     com.serialize_uncompressed(&mut com_as_bytes).unwrap();
-    println!("com_as_bytes: {:?}", com_as_bytes);
+    let com_as_bytes = com_as_bytes[0..32].to_vec();
 
     (*state).db.update(index as usize, &com_as_bytes);
     (*state).num_coins += 1;
@@ -171,6 +180,7 @@ async fn main() -> std::io::Result<()> {
             state: Mutex::new(initialize_state()),
         }
     );
+    println!("zkBricks sequencer listening for transactions...");
 
     HttpServer::new(move || {
         // move counter into the closure
@@ -185,13 +195,27 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
+fn get_dummy_utxo() -> JZRecord<5> {
+    let fields: [Vec<u8>; 5] = 
+    [
+        vec![0u8; 31], //entropy
+        vec![0u8; 31], //owner
+        vec![0u8; 31], //asset id
+        vec![0u8; 31], //amount
+        vec![0u8; 31], //rho
+    ];
+
+    JZRecord::<5>::new(&fields, &[0u8; 31].into())
+}
+
 fn initialize_state() -> AppStateType {
 
-    let hash_of_zeros: Vec<u8> = <ark_crypto_primitives::crh::sha256::Sha256 as CRHScheme>::
-        evaluate(&(), [0u8; 32]).unwrap();
+    // let dummy_hash: Vec<u8> = <ark_crypto_primitives::crh::sha256::Sha256 as CRHScheme>::
+    //     evaluate(&(), [0u8; 32]).unwrap();
+    let dummy_hash = get_dummy_utxo().commitment();
 
     let records: Vec<Vec<u8>> = (0..(1 << MERKLE_TREE_LEVELS))
-        .map(|_| hash_of_zeros.clone())
+        .map(|_| dummy_hash.clone())
         .collect();
 
     let vc_params = JZVectorCommitmentParams::trusted_setup(&mut test_rng());
@@ -201,5 +225,8 @@ fn initialize_state() -> AppStateType {
         MERKLE_TREE_LEVELS, ROOT_HISTORY_SIZE
     );
 
-    AppStateType { db: db, merkle_tree_frontier: merkle_tree, num_coins: 0 }
+    let (_onramp_pk, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
+    let (_payment_pk, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
+
+    AppStateType { onramp_vk, payment_vk, db, merkle_tree_frontier: merkle_tree, num_coins: 0 }
 }
