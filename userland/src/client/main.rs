@@ -3,7 +3,6 @@ use reqwest::Client;
 use ark_ff::{*};
 
 use lib_mpc_zexe::record_commitment::sha256::*;
-use lib_mpc_zexe::protocol as protocol;
 use lib_mpc_zexe::vector_commitment::bytes::sha256::JZVectorCommitmentOpeningProof;
 
 use lib_sanctum::{payment_circuit, onramp_circuit};
@@ -18,12 +17,12 @@ async fn request_merkle_proof(index: usize)
         .text()
         .await?;
 
-    Ok(lib_sanctum::utils::sha2_vector_commitment_opening_proof_from_bs58(
+    Ok(lib_mpc_zexe::protocol::sha2_vector_commitment_opening_proof_from_bs58(
         &serde_json::from_str(&response).unwrap())
     )
 }
 
-async fn submit_onramp_transaction(item: protocol::GrothProofBs58) -> reqwest::Result<()> {
+async fn submit_onramp_transaction(item: lib_mpc_zexe::protocol::GrothProofBs58) -> reqwest::Result<()> {
     let client = Client::new();
     let response = client.post("http://127.0.0.1:8080/onramp")
         .json(&item)
@@ -31,7 +30,7 @@ async fn submit_onramp_transaction(item: protocol::GrothProofBs58) -> reqwest::R
         .await?;
 
     if response.status().is_success() {
-        println!("submitted onramp tx to zkBricks sequencer...");
+        println!("successfully processed onramp tx");
     } else {
         println!("Failed to create item: {:?}", response.status());
     }
@@ -39,7 +38,7 @@ async fn submit_onramp_transaction(item: protocol::GrothProofBs58) -> reqwest::R
     Ok(())
 }
 
-async fn submit_payment_transaction(item: protocol::GrothProofBs58) -> reqwest::Result<()> {
+async fn submit_payment_transaction(item: lib_mpc_zexe::protocol::GrothProofBs58) -> reqwest::Result<()> {
     let client = Client::new();
     let response = client.post("http://127.0.0.1:8080/payment")
         .json(&item)
@@ -47,7 +46,7 @@ async fn submit_payment_transaction(item: protocol::GrothProofBs58) -> reqwest::
         .await?;
     
     if response.status().is_success() {
-        println!("submitted payment tx to zkBricks sequencer...");
+        println!("successfully processed payment tx");
     } else {
         println!("Failed to create item: {:?}", response.status());
     }
@@ -76,13 +75,11 @@ async fn main() -> reqwest::Result<()> {
             &onramp_pk,
             &alice_on_ramp_coin()
         );
-        protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
+        lib_mpc_zexe::protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
     }).await?;
 
     println!("requesting merkle path...");
     let alice_merkle_proof = request_merkle_proof(0).await?;
-    println!("[client.main] root: {}", bs58::encode(alice_merkle_proof.clone().root).into_string());
-    println!("[client.main] record: {}", bs58::encode(alice_merkle_proof.clone().record).into_string());
 
     println!("submitting payment tx...");
     submit_payment_transaction( {
@@ -93,7 +90,7 @@ async fn main() -> reqwest::Result<()> {
             &alice_merkle_proof,
             &alice_key().0
         );
-        protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
+        lib_mpc_zexe::protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
     }).await?;
 
     Ok(())

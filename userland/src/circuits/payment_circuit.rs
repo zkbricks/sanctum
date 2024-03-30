@@ -228,13 +228,18 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         let input_utxo_commitment_byte_vars: Vec::<UInt8<ConstraintF>> = input_utxo_var
             .commitment // grab the commitment variable
             .to_bytes()?; // let's use arkworks' to_bytes gadget
-        println!("input_utxo_commitment_byte_vars.len: {:?}", input_utxo_commitment_byte_vars.len());
-        println!("proof_var.leaf_var.len: {:?}", proof_var.leaf_var.len());
-        // constrain equality w.r.t. to the leaf node, byte by byte
-        for (i, byte_var) in input_utxo_commitment_byte_vars.iter().enumerate() {
-            // the serialization impl for CanonicalSerialize does x first
-            byte_var.enforce_equal(&proof_var.leaf_var[i])?;
-        }
+        let proof_var_leaf_var_bytes: Vec::<UInt8<ConstraintF>> = proof_var.leaf_var
+            .iter()
+            .skip(8) // skip the first 64 bits, which encode the length
+            .cloned()
+            .collect();
+
+        input_utxo_commitment_byte_vars
+            .iter()
+            .zip(proof_var_leaf_var_bytes.iter())
+            .for_each(|(input_byte, proof_byte)| {
+                input_byte.enforce_equal(proof_byte).unwrap();
+            });
 
         // 7. does the proof use the same root as what is declared in the statement?
         let root_var_bytes = root_inputvar.to_bytes()?;
@@ -305,10 +310,6 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
             output_utxo: get_dummy_utxo(), // again, doesn't matter what value
             unspent_coin_existence_proof: merkle_proof.clone(),
         };
-
-        println!("[circuit_setup] merkle_proof root: {:?}", bs58::encode(merkle_proof.root).into_string());
-        println!("[circuit_setup] merkle_proof record: {:?}", bs58::encode(merkle_proof.record).into_string());
-        println!("[circuit_setup] merkle_proof path len: {:?}", merkle_proof.path.auth_path.len());
 
         circuit
     };

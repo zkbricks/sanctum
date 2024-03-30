@@ -1,5 +1,4 @@
 use actix_web::{web, App, HttpServer};
-use ark_crypto_primitives::crh::CRHScheme;
 use ark_serialize::CanonicalSerialize;
 use ark_bw6_761::BW6_761;
 use ark_groth16::*;
@@ -64,13 +63,9 @@ async fn serve_merkle_proof_request(
         path: (*state).db.proof(index),
     };
 
-    let merkle_proof_bs58 = lib_sanctum::utils::sha2_vector_commitment_opening_proof_to_bs58(
+    let merkle_proof_bs58 = lib_mpc_zexe::protocol::sha2_vector_commitment_opening_proof_to_bs58(
         &merkle_proof
     );
-
-    println!("[serve_merkle_proof_request] index: {}", index);
-    println!("[serve_merkle_proof_request] root: {}", bs58::encode(merkle_proof.root).into_string());
-    println!("[serve_merkle_proof_request] record: {}", bs58::encode(merkle_proof.record).into_string());
 
     drop(state);
 
@@ -106,16 +101,11 @@ async fn process_onramp_tx(
     let com = public_inputs[OnrampGrothPublicInput::COMMITMENT as usize];
 
     let mut com_as_bytes: Vec<u8> = Vec::new();
-    com.serialize_uncompressed(&mut com_as_bytes).unwrap();
+    com.serialize_compressed(&mut com_as_bytes).unwrap();
     let com_as_bytes = com_as_bytes[0..32].to_vec();
-
-    println!("[process_onramp_tx] record: {}", bs58::encode(&com_as_bytes).into_string());
-    println!("[process_onramp_tx] previous root: {}", bs58::encode(&(*state).db.commitment()).into_string());
 
     (*state).db.update(index as usize, &com_as_bytes);
     (*state).num_coins += 1;
-
-    println!("[process_onramp_tx] new root: {}", bs58::encode(&(*state).db.commitment()).into_string());
 
     drop(state);
 
@@ -135,13 +125,9 @@ async fn process_payment_tx(
     let (groth_proof, public_inputs) = 
         protocol::groth_proof_from_bs58(&proof.into_inner());
 
-    println!("[process_payment_tx] current root: {}", bs58::encode(&(*state).db.commitment()).into_string());
-
     let stmt_root = public_inputs[PaymentGrothPublicInput::ROOT as usize];
     let mut stmt_root_as_bytes: Vec<u8> = Vec::new();
-    stmt_root.serialize_uncompressed(&mut stmt_root_as_bytes).unwrap();
-    let stmt_root_as_bytes = stmt_root_as_bytes[0..32].to_vec();
-    println!("[process_payment_tx] statement root: {}", bs58::encode(stmt_root_as_bytes).into_string());
+    stmt_root.serialize_compressed(&mut stmt_root_as_bytes).unwrap();
 
     let valid_proof = Groth16::<BW6_761>::verify(
         &(*state).payment_vk,
@@ -160,7 +146,7 @@ async fn process_payment_tx(
     let com = public_inputs[PaymentGrothPublicInput::COMMITMENT as usize];
 
     let mut com_as_bytes: Vec<u8> = Vec::new();
-    com.serialize_uncompressed(&mut com_as_bytes).unwrap();
+    com.serialize_compressed(&mut com_as_bytes).unwrap();
     let com_as_bytes = com_as_bytes[0..32].to_vec();
 
     (*state).db.update(index as usize, &com_as_bytes);
