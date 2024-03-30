@@ -5,6 +5,7 @@ use ark_groth16::*;
 use ark_snark::SNARK;
 use ark_std::test_rng;
 use lib_mpc_zexe::record_commitment::sha256::JZRecord;
+use std::borrow::BorrowMut;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -16,6 +17,9 @@ use lib_mpc_zexe::vector_commitment::bytes::sha256::{
 };
 
 use lib_mpc_zexe::protocol::{self as protocol};
+
+// Finite Field used to encode the zk circuit
+type ConstraintF = ark_bw6_761::Fr;
 
 // define the depth of the merkle tree as a constant
 const MERKLE_TREE_LEVELS: u32 = 8;
@@ -47,6 +51,29 @@ pub struct AppStateType {
 
 struct GlobalAppState {
     state: Mutex<AppStateType>, // <- Mutex is necessary to mutate safely across threads
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    // Note: web::Data created _outside_ HttpServer::new closure
+    let app_state = web::Data::new(
+        GlobalAppState {
+            state: Mutex::new(initialize_state()),
+        }
+    );
+    println!("zkBricks sequencer listening for transactions...");
+
+    HttpServer::new(move || {
+        // move counter into the closure
+        App::new()
+            .app_data(app_state.clone()) // <- register the created data
+            .route("/onramp", web::post().to(process_onramp_tx))
+            .route("/payment", web::post().to(process_payment_tx))
+            .route("/merkle", web::get().to(serve_merkle_proof_request))
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
 }
 
 // queries the merkle opening proof, as the L1 contract only stores the frontier merkle tree
@@ -97,15 +124,20 @@ async fn process_onramp_tx(
     );
 
     // let's add all the output coins to the state
-    let index: u32 = (*state).num_coins;
-    let com = public_inputs[OnrampGrothPublicInput::COMMITMENT as usize];
+    //let com = public_inputs[OnrampGrothPublicInput::COMMITMENT as usize];
 
-    let mut com_as_bytes: Vec<u8> = Vec::new();
-    com.serialize_compressed(&mut com_as_bytes).unwrap();
-    let com_as_bytes = com_as_bytes[0..32].to_vec();
+    //let index: u32 = (*state).num_coins;
+    // let mut com_as_bytes: Vec<u8> = Vec::new();
+    // com.serialize_compressed(&mut com_as_bytes).unwrap();
+    // let com_as_bytes = com_as_bytes[0..32].to_vec();
 
-    (*state).db.update(index as usize, &com_as_bytes);
-    (*state).num_coins += 1;
+    // (*state).db.update(index as usize, &com_as_bytes);
+    // (*state).num_coins += 1;
+
+    add_coin_to_state(
+        (*state).borrow_mut(),
+        &public_inputs[OnrampGrothPublicInput::COMMITMENT as usize]
+    );
 
     drop(state);
 
@@ -142,44 +174,26 @@ async fn process_payment_tx(
     );
 
     // let's add all the output coins to the state
-    let index: u32 = (*state).num_coins;
-    let com = public_inputs[PaymentGrothPublicInput::COMMITMENT as usize];
+    // let index: u32 = (*state).num_coins;
+    // let com = public_inputs[PaymentGrothPublicInput::COMMITMENT as usize];
 
-    let mut com_as_bytes: Vec<u8> = Vec::new();
-    com.serialize_compressed(&mut com_as_bytes).unwrap();
-    let com_as_bytes = com_as_bytes[0..32].to_vec();
+    // let mut com_as_bytes: Vec<u8> = Vec::new();
+    // com.serialize_compressed(&mut com_as_bytes).unwrap();
+    // let com_as_bytes = com_as_bytes[0..32].to_vec();
 
-    (*state).db.update(index as usize, &com_as_bytes);
-    (*state).num_coins += 1;
+    // (*state).db.update(index as usize, &com_as_bytes);
+    // (*state).num_coins += 1;
+
+    add_coin_to_state(
+        (*state).borrow_mut(),
+        &public_inputs[PaymentGrothPublicInput::COMMITMENT as usize]
+    );
 
     drop(state);
 
     "success".to_string()
 }
 
-
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    // Note: web::Data created _outside_ HttpServer::new closure
-    let app_state = web::Data::new(
-        GlobalAppState {
-            state: Mutex::new(initialize_state()),
-        }
-    );
-    println!("zkBricks sequencer listening for transactions...");
-
-    HttpServer::new(move || {
-        // move counter into the closure
-        App::new()
-            .app_data(app_state.clone()) // <- register the created data
-            .route("/onramp", web::post().to(process_onramp_tx))
-            .route("/payment", web::post().to(process_payment_tx))
-            .route("/merkle", web::get().to(serve_merkle_proof_request))
-    })
-    .bind(("127.0.0.1", 8080))?
-    .run()
-    .await
-}
 
 fn get_dummy_utxo() -> JZRecord<5> {
     let fields: [Vec<u8>; 5] = 
@@ -215,4 +229,14 @@ fn initialize_state() -> AppStateType {
     let (_payment_pk, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
 
     AppStateType { onramp_vk, payment_vk, db, merkle_tree_frontier: merkle_tree, num_coins: 0 }
+}
+
+fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
+    let mut com_as_bytes: Vec<u8> = Vec::new();
+    com.serialize_compressed(&mut com_as_bytes).unwrap();
+    let com_as_bytes = com_as_bytes[0..32].to_vec();
+
+    let index: u32 = (*state).num_coins;
+    (*state).db.update(index as usize, &com_as_bytes);
+    (*state).num_coins += 1;
 }
