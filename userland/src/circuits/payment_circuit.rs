@@ -1,6 +1,6 @@
-use std::cmp::min;
 use rand_chacha::rand_core::SeedableRng;
 use std::borrow::Borrow;
+use std::cmp::min;
 
 use ark_ff::*;
 use ark_bw6_761::{*};

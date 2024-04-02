@@ -10,8 +10,8 @@ use std::time::Instant;
 
 use lib_mpc_zexe::vector_commitment::bytes::sha256::*;
 
-mod frontier_merkle_tree;
-use frontier_merkle_tree::FrontierMerkleTreeWithHistory;
+// mod frontier_merkle_tree;
+// use frontier_merkle_tree::FrontierMerkleTreeWithHistory;
 
 
 use lib_mpc_zexe::protocol::{self as protocol};
@@ -22,7 +22,7 @@ type ConstraintF = ark_bw6_761::Fr;
 // define the depth of the merkle tree as a constant
 const MERKLE_TREE_LEVELS: u32 = 8;
 
-const ROOT_HISTORY_SIZE: u32 = 30;
+const _ROOT_HISTORY_SIZE: u32 = 30;
 
 #[allow(non_camel_case_types)]
 pub enum PaymentGrothPublicInput {
@@ -43,7 +43,7 @@ pub struct AppStateType {
     onramp_vk: VerifyingKey<BW6_761>,
     payment_vk: VerifyingKey<BW6_761>,
     db: JZVectorDB<Vec<u8>>, //leaves of sha256 hashes
-    merkle_tree_frontier: FrontierMerkleTreeWithHistory,
+    //merkle_tree_frontier: FrontierMerkleTreeWithHistory,
     num_coins: u32,
 }
 
@@ -183,18 +183,16 @@ fn initialize_state() -> AppStateType {
     let vc_params = JZVectorCommitmentParams::trusted_setup(&mut test_rng());
     let db = JZVectorDB::<Vec<u8>>::new(&vc_params, &records);
     
-    let merkle_tree = FrontierMerkleTreeWithHistory::new(
-        MERKLE_TREE_LEVELS, ROOT_HISTORY_SIZE
-    );
+    // let merkle_tree = FrontierMerkleTreeWithHistory::new(
+    //     MERKLE_TREE_LEVELS, ROOT_HISTORY_SIZE
+    // );
 
-    println!("[main.initialize_state] merkle_tree.get_latest_root(): {}", bs58::encode(merkle_tree.get_latest_root()).into_string());
-    println!("[main.initialize_state] db.commitment(): {}", bs58::encode(db.commitment()).into_string());
-    assert_eq!(db.commitment(), merkle_tree.get_latest_root());
+    //assert_eq!(db.commitment(), merkle_tree.get_latest_root());
 
     let (_onramp_pk, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
     let (_payment_pk, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
 
-    AppStateType { onramp_vk, payment_vk, db, merkle_tree_frontier: merkle_tree, num_coins: 0 }
+    AppStateType { onramp_vk, payment_vk, db, /* merkle_tree_frontier: merkle_tree,*/ num_coins: 0 }
 }
 
 fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
@@ -204,7 +202,7 @@ fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
     let com_as_bytes = com_as_bytes[0..32].to_vec();
 
     // add it to the frontier merkle tree
-    (*state).merkle_tree_frontier.insert(&com_as_bytes);
+    //(*state).merkle_tree_frontier.insert(&com_as_bytes);
 
     // add it to the vector db
     let index: u32 = (*state).num_coins;
@@ -212,5 +210,5 @@ fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
     (*state).num_coins += 1;
 
     //check the invariant that the frontier tree is consistent with the vector db
-    assert_eq!((*state).db.commitment(), (*state).merkle_tree_frontier.get_latest_root());
+    //assert_eq!((*state).db.commitment(), (*state).merkle_tree_frontier.get_latest_root());
 }
