@@ -4,17 +4,15 @@ use ark_bw6_761::BW6_761;
 use ark_groth16::*;
 use ark_snark::SNARK;
 use ark_std::test_rng;
-use lib_mpc_zexe::record_commitment::sha256::JZRecord;
 use std::borrow::BorrowMut;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use lib_mpc_zexe::vector_commitment::bytes::sha256::{
-    FrontierMerkleTreeWithHistory,
-    JZVectorDB,
-    JZVectorCommitmentOpeningProof,
-    JZVectorCommitmentParams
-};
+use lib_mpc_zexe::vector_commitment::bytes::sha256::*;
+
+mod frontier_merkle_tree;
+use frontier_merkle_tree::FrontierMerkleTreeWithHistory;
+
 
 use lib_mpc_zexe::protocol::{self as protocol};
 
@@ -123,17 +121,6 @@ async fn process_onramp_tx(
         now.elapsed().subsec_millis()
     );
 
-    // let's add all the output coins to the state
-    //let com = public_inputs[OnrampGrothPublicInput::COMMITMENT as usize];
-
-    //let index: u32 = (*state).num_coins;
-    // let mut com_as_bytes: Vec<u8> = Vec::new();
-    // com.serialize_compressed(&mut com_as_bytes).unwrap();
-    // let com_as_bytes = com_as_bytes[0..32].to_vec();
-
-    // (*state).db.update(index as usize, &com_as_bytes);
-    // (*state).num_coins += 1;
-
     add_coin_to_state(
         (*state).borrow_mut(),
         &public_inputs[OnrampGrothPublicInput::COMMITMENT as usize]
@@ -173,17 +160,6 @@ async fn process_payment_tx(
         now.elapsed().subsec_millis()
     );
 
-    // let's add all the output coins to the state
-    // let index: u32 = (*state).num_coins;
-    // let com = public_inputs[PaymentGrothPublicInput::COMMITMENT as usize];
-
-    // let mut com_as_bytes: Vec<u8> = Vec::new();
-    // com.serialize_compressed(&mut com_as_bytes).unwrap();
-    // let com_as_bytes = com_as_bytes[0..32].to_vec();
-
-    // (*state).db.update(index as usize, &com_as_bytes);
-    // (*state).num_coins += 1;
-
     add_coin_to_state(
         (*state).borrow_mut(),
         &public_inputs[PaymentGrothPublicInput::COMMITMENT as usize]
@@ -195,27 +171,13 @@ async fn process_payment_tx(
 }
 
 
-fn get_dummy_utxo() -> JZRecord<5> {
-    let fields: [Vec<u8>; 5] = 
-    [
-        vec![0u8; 31], //entropy
-        vec![0u8; 31], //owner
-        vec![0u8; 31], //asset id
-        vec![0u8; 31], //amount
-        vec![0u8; 31], //rho
-    ];
-
-    JZRecord::<5>::new(&fields, &[0u8; 31].into())
-}
-
 fn initialize_state() -> AppStateType {
 
     // let dummy_hash: Vec<u8> = <ark_crypto_primitives::crh::sha256::Sha256 as CRHScheme>::
     //     evaluate(&(), [0u8; 32]).unwrap();
-    let dummy_hash = get_dummy_utxo().commitment();
 
     let records: Vec<Vec<u8>> = (0..(1 << MERKLE_TREE_LEVELS))
-        .map(|_| dummy_hash.clone())
+        .map(|_| [0u8; 32].to_vec())
         .collect();
 
     let vc_params = JZVectorCommitmentParams::trusted_setup(&mut test_rng());
@@ -225,6 +187,10 @@ fn initialize_state() -> AppStateType {
         MERKLE_TREE_LEVELS, ROOT_HISTORY_SIZE
     );
 
+    println!("[main.initialize_state] merkle_tree.get_latest_root(): {}", bs58::encode(merkle_tree.get_latest_root()).into_string());
+    println!("[main.initialize_state] db.commitment(): {}", bs58::encode(db.commitment()).into_string());
+    assert_eq!(db.commitment(), merkle_tree.get_latest_root());
+
     let (_onramp_pk, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
     let (_payment_pk, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
 
@@ -232,11 +198,19 @@ fn initialize_state() -> AppStateType {
 }
 
 fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
+    // lets first serialize the commitment to 32 bytes, as it encodes a sha256 hash
     let mut com_as_bytes: Vec<u8> = Vec::new();
     com.serialize_compressed(&mut com_as_bytes).unwrap();
     let com_as_bytes = com_as_bytes[0..32].to_vec();
 
+    // add it to the frontier merkle tree
+    (*state).merkle_tree_frontier.insert(&com_as_bytes);
+
+    // add it to the vector db
     let index: u32 = (*state).num_coins;
     (*state).db.update(index as usize, &com_as_bytes);
     (*state).num_coins += 1;
+
+    //check the invariant that the frontier tree is consistent with the vector db
+    assert_eq!((*state).db.commitment(), (*state).merkle_tree_frontier.get_latest_root());
 }

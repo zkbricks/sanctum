@@ -1423,7 +1423,7 @@ dependencies = [
 [[package]]
 name = "mpc_zexe"
 version = "0.1.0"
-source = "git+https://github.com/zkbricks/mpc-zexe.git#171d7cea456f1d1266902058bfc341363d19c98d"
+source = "git+https://github.com/zkbricks/mpc-zexe.git#837b40a05fbf9bf01859256eccf02009a88e2397"
 dependencies = [
  "actix-rt",
  "actix-web",
