@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use lib_mpc_zexe::vector_commitment::bytes::sha256::*;
+use lib_sanctum::merkle_update_circuit;
 
 // mod frontier_merkle_tree;
 // use frontier_merkle_tree::FrontierMerkleTreeWithHistory;
@@ -42,9 +43,12 @@ pub enum OnrampGrothPublicInput {
 pub struct AppStateType {
     onramp_vk: VerifyingKey<BW6_761>,
     payment_vk: VerifyingKey<BW6_761>,
+    merkle_update_pk: ProvingKey<BW6_761>,
+    merkle_update_vk: VerifyingKey<BW6_761>,
+
     db: JZVectorDB<Vec<u8>>, //leaves of sha256 hashes
     //merkle_tree_frontier: FrontierMerkleTreeWithHistory,
-    num_coins: u32,
+    num_coins: usize,
 }
 
 struct GlobalAppState {
@@ -191,8 +195,16 @@ fn initialize_state() -> AppStateType {
 
     let (_onramp_pk, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
     let (_payment_pk, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
+    let (merkle_update_pk, merkle_update_vk) = lib_sanctum::merkle_update_circuit::circuit_setup();
 
-    AppStateType { onramp_vk, payment_vk, db, /* merkle_tree_frontier: merkle_tree,*/ num_coins: 0 }
+    AppStateType {
+        onramp_vk,
+        payment_vk,
+        merkle_update_pk,
+        merkle_update_vk,
+        db,
+        num_coins: 0 
+    }
 }
 
 fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
@@ -201,14 +213,41 @@ fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
     com.serialize_compressed(&mut com_as_bytes).unwrap();
     let com_as_bytes = com_as_bytes[0..32].to_vec();
 
+    let leaf_index = (*state).num_coins;
+
     // add it to the frontier merkle tree
     //(*state).merkle_tree_frontier.insert(&com_as_bytes);
+    let old_merkle_proof = JZVectorCommitmentOpeningProof::<Vec<u8>> {
+        root: (*state).db.commitment(),
+        record: (*state).db.get_record(leaf_index).clone(),
+        path: (*state).db.proof(leaf_index),
+    };
 
     // add it to the vector db
-    let index: u32 = (*state).num_coins;
-    (*state).db.update(index as usize, &com_as_bytes);
+    (*state).db.update(leaf_index as usize, &com_as_bytes);
     (*state).num_coins += 1;
+
+    let new_merkle_proof = JZVectorCommitmentOpeningProof::<Vec<u8>> {
+        root: (*state).db.commitment(),
+        record: (*state).db.get_record(leaf_index).clone(),
+        path: (*state).db.proof(leaf_index),
+    };
 
     //check the invariant that the frontier tree is consistent with the vector db
     //assert_eq!((*state).db.commitment(), (*state).merkle_tree_frontier.get_latest_root());
+
+    let (proof, public_inputs) = merkle_update_circuit::generate_groth_proof(
+        &(*state).merkle_update_pk,
+        &old_merkle_proof,
+        &new_merkle_proof,
+        leaf_index
+    );
+
+    let valid_proof = Groth16::<BW6_761>::verify(
+        &(*state).merkle_update_vk,
+        &public_inputs,
+        &proof
+    ).unwrap();
+
+    assert!(valid_proof);
 }
