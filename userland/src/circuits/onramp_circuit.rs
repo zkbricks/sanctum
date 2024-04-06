@@ -3,6 +3,7 @@ use rand_chacha::rand_core::SeedableRng;
 use std::borrow::Borrow;
 
 use ark_ff::*;
+use ark_ec::CurveGroup;
 use ark_bw6_761::{*};
 use ark_r1cs_std::prelude::*;
 use ark_std::*;
@@ -10,8 +11,9 @@ use ark_relations::r1cs::*;
 use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_snark::SNARK;
 
-use lib_mpc_zexe::record_commitment::sha256::{*, constraints::*};
-use lib_mpc_zexe::utils;
+use lib_mpc_zexe::record_commitment::kzg::{*, constraints::*};
+
+use super::utils;
 use super::{AMOUNT, ASSET_ID};
 
 // Finite Field used to encode the zk circuit
@@ -22,7 +24,8 @@ type ConstraintF = ark_bw6_761::Fr;
 pub enum GrothPublicInput {
     ASSET_ID = 0,
     AMOUNT = 1,
-    COMMITMENT = 2,
+    COMMITMENT_X = 2,
+    COMMITMENT_Y = 3,
 }
 
 
@@ -30,8 +33,10 @@ pub enum GrothPublicInput {
 /// during the on-ramp process commits to the amount and asset_id
 /// being claimed by the client.
 pub struct OnRampCircuit {
+    /// public parameters (CRS) for the KZG commitment scheme
+    pub crs: JZKZGCommitmentParams<5>,
     /// all fields of the utxo is a secret witness in the proof generation
-    pub unspent_utxo: JZRecord<5>,
+    pub utxo: JZRecord<5>,
 }
 
 /// ConstraintSynthesizer is a trait that is implemented for the OnRampCircuit;
@@ -44,12 +49,17 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
         cs: ConstraintSystemRef<ConstraintF>,
     ) -> Result<()> {
 
+        let crs_var = JZKZGCommitmentParamsVar::<5>::new_constant(
+            cs.clone(),
+            self.crs
+        ).unwrap();
+
         //----------------- declaration of public values for the coin ---------------------
 
         // we need the asset_id and amount to be public inputs to the circuit
         // so let's create variables for them
         let asset_id = utils::bytes_to_field::<ConstraintF, 6>(
-            &self.unspent_utxo.fields[ASSET_ID]
+            &self.utxo.fields[ASSET_ID]
         );
 
         let asset_id_var = ark_bls12_377::constraints::FqVar::new_input(
@@ -58,7 +68,7 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
         ).unwrap();
 
         let amount = utils::bytes_to_field::<ConstraintF, 6>(
-            &self.unspent_utxo.fields[AMOUNT]
+            &self.utxo.fields[AMOUNT]
         );
 
         let amount_var = ark_bls12_377::constraints::FqVar::new_input(
@@ -68,55 +78,65 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
 
         //--------------- knowledge of opening of unspent UTXO commitment ------------------
         
-        let unspent_utxo_record = self.unspent_utxo.borrow();
+        let utxo_record = self.utxo.borrow();
 
-        let unspent_utxo_var = JZRecordVar::<5>::new_witness(
+        let utxo_var = JZRecordVar::<5>::new_witness(
             cs.clone(),
-            || Ok(unspent_utxo_record)
+            || Ok(utxo_record)
         ).unwrap();
 
-        let unspent_utxo_commitment = utils::bytes_to_field::<ark_bls12_377::Fq, 6>(
-            &unspent_utxo_record.commitment()
-        );
+        let utxo_commitment = utxo_record.commitment().into_affine();
 
         // a commitment is an (affine) group element so we separately 
         // expose the x and y coordinates, computed below
-        let unspent_utxo_commitment_input_var = ark_bls12_377::constraints::FqVar::new_input(
-            ark_relations::ns!(cs, "commitment"), 
-            || { Ok(unspent_utxo_commitment) },
+        let utxo_commitment_x_input_var = ark_bls12_377::constraints::FqVar::new_input(
+            ark_relations::ns!(cs, "commitment_x"), 
+            || { Ok(utxo_commitment.x) },
+        ).unwrap();
+
+        let utxo_commitment_y_input_var = ark_bls12_377::constraints::FqVar::new_input(
+            ark_relations::ns!(cs, "commitment_y"), 
+            || { Ok(utxo_commitment.y) },
         ).unwrap();
 
         // fire off the constraint generation which will include the 
         // circuitry to compute the KZG commitment
-        lib_mpc_zexe::record_commitment::sha256::constraints::generate_constraints(
+        lib_mpc_zexe::record_commitment::kzg::constraints::generate_constraints(
             cs.clone(),
-            &unspent_utxo_var
+            &crs_var,
+            &utxo_var
         ).unwrap();
 
         //--------------- Binding all circuit gadgets together ------------------
 
         // NOTE: we are assuming to_bytes uses little-endian encoding, which I believe it does
+        let utxo_commitment_x_input_var_bytes = utxo_commitment_x_input_var.to_bytes().unwrap();
+        let utxo_commitment_x_computed_var_bytes = utxo_var.commitment.x.to_bytes().unwrap();
+        assert!(utxo_commitment_x_input_var_bytes.len() == utxo_commitment_x_computed_var_bytes.len());
+        utxo_commitment_x_input_var_bytes
+            .iter()
+            .zip(utxo_commitment_x_computed_var_bytes.iter())
+            .for_each(|(a, b)| a.enforce_equal(b).unwrap());
 
-        // let's constrain the input variable to be the digest that we computed
-        let unspent_utxo_commitment_input_var_bytes = unspent_utxo_commitment_input_var.to_bytes().unwrap();
-        let unspent_utxo_commitment_computed_var_bytes = unspent_utxo_var.commitment.to_bytes().unwrap();
-        for i in 0..min(
-            unspent_utxo_commitment_input_var_bytes.len(),
-            unspent_utxo_commitment_computed_var_bytes.len()
-        ) {
-            unspent_utxo_commitment_input_var_bytes[i].enforce_equal(&unspent_utxo_commitment_computed_var_bytes[i])?;
-        }
+
+        let utxo_commitment_y_input_var_bytes = utxo_commitment_y_input_var.to_bytes().unwrap();
+        let utxo_commitment_y_computed_var_bytes = utxo_var.commitment.y.to_bytes().unwrap();
+        assert!(utxo_commitment_y_input_var_bytes.len() == utxo_commitment_y_computed_var_bytes.len());
+        utxo_commitment_y_input_var_bytes
+            .iter()
+            .zip(utxo_commitment_y_computed_var_bytes.iter())
+            .for_each(|(a, b)| a.enforce_equal(b).unwrap());
 
         // let's constrain the amount bits to be equal to the amount_var
         let amount_inputvar_bytes = amount_var.to_bytes()?;
-        for i in 0..min(unspent_utxo_var.fields[AMOUNT].len(), amount_inputvar_bytes.len()) {
-            unspent_utxo_var.fields[AMOUNT][i].enforce_equal(&amount_inputvar_bytes[i])?;
+        for i in 0..min(utxo_var.fields[AMOUNT].len(), amount_inputvar_bytes.len()) {
+            utxo_var.fields[AMOUNT][i].enforce_equal(&amount_inputvar_bytes[i])?;
         }
 
         // let's constrain the asset_id bits to be equal to the asset_id_var
         let assetid_inputvar_bytes = asset_id_var.to_bytes()?;
-        for i in 0..min(unspent_utxo_var.fields[ASSET_ID].len(), assetid_inputvar_bytes.len()) {
-            unspent_utxo_var.fields[ASSET_ID][i].enforce_equal(&assetid_inputvar_bytes[i])?;
+        for i in 0..min(utxo_var.fields[ASSET_ID].len(), assetid_inputvar_bytes.len()) {
+            utxo_var.fields[ASSET_ID][i].enforce_equal(&assetid_inputvar_bytes[i])?;
         }
 
         Ok(())
@@ -124,25 +144,9 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
 }
 
 pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
-
+    let (_, _, crs) = utils::trusted_setup();
     // create a circuit with a dummy witness
-    let circuit = {
-        
-        // our dummy witness is a coin with all fields set to zero
-        let fields: [Vec<u8>; 5] = 
-        [
-            vec![0u8; 31], //entropy
-            vec![0u8; 31], //owner
-            vec![0u8; 31], //asset id
-            vec![0u8; 31], //amount
-            vec![0u8; 31], //rho
-        ];
-
-        // let's create our dummy coin out of the above zeroed fields
-        let coin = JZRecord::<5>::new(&fields, &[0u8; 31].into());
-    
-        OnRampCircuit { unspent_utxo: coin.clone() }
-    };
+    let circuit = OnRampCircuit { crs: crs.clone(), utxo: utils::get_dummy_utxo(&crs) };
 
     let seed = [0u8; 32];
     let mut rng = rand_chacha::ChaCha8Rng::from_seed(seed);
@@ -156,36 +160,34 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
 
 pub fn generate_groth_proof(
     pk: &ProvingKey<BW6_761>,
-    unspent_coin: &JZRecord<5>,
+    utxo: &JZRecord<5>,
 ) -> (Proof<BW6_761>, Vec<ConstraintF>) {
 
-    let circuit = OnRampCircuit { unspent_utxo: unspent_coin.clone() };
-
-    // native computation of the created coin's commitment
-    let unspent_coin_com = utils::bytes_to_field::<ConstraintF, 6>(
-        circuit.unspent_utxo.commitment().as_slice()
-    );
+    let (_, _, crs) = utils::trusted_setup();
+    let circuit = OnRampCircuit { crs, utxo: utxo.clone() };
 
     // construct a BW6_761 field element from the asset_id bits
     let asset_id = utils::bytes_to_field::<ConstraintF, 6>(
-        &circuit.unspent_utxo.fields[ASSET_ID]
+        &circuit.utxo.fields[ASSET_ID]
     );
 
     // construct a BW6_761 field element from the amount bits
     let amount = utils::bytes_to_field::<ConstraintF, 6>(
-        &circuit.unspent_utxo.fields[AMOUNT]
+        &circuit.utxo.fields[AMOUNT]
     );
 
     // arrange the public inputs based on the GrothPublicInput enum definition
     // pub enum GrothPublicInput {
     //     ASSET_ID = 0,
     //     AMOUNT = 1,
-    //     COMMITMENT = 2,
+    //     COMMITMENT_X = 2,
+    //     COMMITMENT_Y = 3,
     // }
     let public_inputs: Vec<ConstraintF> = vec![
         asset_id,
         amount,
-        unspent_coin_com
+        circuit.utxo.commitment().x,
+        circuit.utxo.commitment().y
     ];
 
     let seed = [0u8; 32];
