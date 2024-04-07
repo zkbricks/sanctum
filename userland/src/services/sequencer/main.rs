@@ -1,24 +1,18 @@
 use actix_web::{web, App, HttpServer};
-use ark_serialize::CanonicalSerialize;
+use ark_ec::CurveGroup;
 use ark_bw6_761::BW6_761;
 use ark_groth16::*;
 use ark_snark::SNARK;
-use ark_std::test_rng;
 use std::borrow::BorrowMut;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use lib_mpc_zexe::vector_commitment::bytes::sha256::*;
-use lib_sanctum::merkle_update_circuit;
-
-// mod frontier_merkle_tree;
-// use frontier_merkle_tree::FrontierMerkleTreeWithHistory;
-
-
+use lib_mpc_zexe::vector_commitment::bytes::pedersen::*;
 use lib_mpc_zexe::protocol::{self as protocol};
 
-// Finite Field used to encode the zk circuit
-type ConstraintF = ark_bw6_761::Fr;
+use lib_sanctum::merkle_update_circuit;
+use lib_sanctum::utils;
+
 
 // define the depth of the merkle tree as a constant
 const MERKLE_TREE_LEVELS: u32 = 8;
@@ -27,16 +21,19 @@ const _ROOT_HISTORY_SIZE: u32 = 30;
 
 #[allow(non_camel_case_types)]
 pub enum PaymentGrothPublicInput {
-    ROOT = 0, // merkle root for proving membership of input utxo
-    NULLIFIER = 1, // commitment of output utxo
-    COMMITMENT = 2, // nullifier to the input utxo
+    ROOT_X = 0, // merkle root for proving membership of input utxo
+    ROOT_Y = 1, // merkle root for proving membership of input utxo
+    NULLIFIER = 2, // nullifier to the input utxo
+    COMMITMENT_X = 3, // commitment of the output utxo
+    COMMITMENT_Y = 4, // commitment of the output utxo
 }
 
 #[allow(non_camel_case_types)]
 pub enum OnrampGrothPublicInput {
     ASSET_ID = 0,
     AMOUNT = 1,
-    COMMITMENT = 2,
+    COMMITMENT_X = 2,
+    COMMITMENT_Y = 3,
 }
 
 
@@ -46,7 +43,7 @@ pub struct AppStateType {
     merkle_update_pk: ProvingKey<BW6_761>,
     merkle_update_vk: VerifyingKey<BW6_761>,
 
-    db: JZVectorDB<Vec<u8>>, //leaves of sha256 hashes
+    db: JZVectorDB<ark_bls12_377::G1Affine>, //leaves of sha256 hashes
     //merkle_tree_frontier: FrontierMerkleTreeWithHistory,
     num_coins: usize,
 }
@@ -86,15 +83,17 @@ async fn serve_merkle_proof_request(
     let state = global_state.state.lock().unwrap();
     let index: usize = index.into_inner();
 
-    let merkle_proof = JZVectorCommitmentOpeningProof::<Vec<u8>> {
-        root: (*state).db.commitment(),
-        record: (*state).db.get_record(index).clone(),
-        path: (*state).db.proof(index),
-    };
+    let merkle_proof = 
+        JZVectorCommitmentOpeningProof::<ark_bls12_377::G1Affine> {
+            root: (*state).db.commitment(),
+            record: (*state).db.get_record(index).clone(),
+            path: (*state).db.proof(index),
+        };
 
-    let merkle_proof_bs58 = lib_mpc_zexe::protocol::sha2_vector_commitment_opening_proof_to_bs58(
-        &merkle_proof
-    );
+    let merkle_proof_bs58 = 
+        lib_mpc_zexe::protocol::jubjub_vector_commitment_opening_proof_to_bs58(
+            &merkle_proof
+        );
 
     drop(state);
 
@@ -125,10 +124,11 @@ async fn process_onramp_tx(
         now.elapsed().subsec_millis()
     );
 
-    add_coin_to_state(
-        (*state).borrow_mut(),
-        &public_inputs[OnrampGrothPublicInput::COMMITMENT as usize]
+    let utxo_com = ark_bls12_377::G1Affine::new(
+        public_inputs[OnrampGrothPublicInput::COMMITMENT_X as usize],
+        public_inputs[OnrampGrothPublicInput::COMMITMENT_Y as usize]
     );
+    add_coin_to_state((*state).borrow_mut(), &utxo_com);
 
     drop(state);
 
@@ -148,10 +148,6 @@ async fn process_payment_tx(
     let (groth_proof, public_inputs) = 
         protocol::groth_proof_from_bs58(&proof.into_inner());
 
-    let stmt_root = public_inputs[PaymentGrothPublicInput::ROOT as usize];
-    let mut stmt_root_as_bytes: Vec<u8> = Vec::new();
-    stmt_root.serialize_compressed(&mut stmt_root_as_bytes).unwrap();
-
     let valid_proof = Groth16::<BW6_761>::verify(
         &(*state).payment_vk,
         &public_inputs,
@@ -164,34 +160,27 @@ async fn process_payment_tx(
         now.elapsed().subsec_millis()
     );
 
-    add_coin_to_state(
-        (*state).borrow_mut(),
-        &public_inputs[PaymentGrothPublicInput::COMMITMENT as usize]
+    let utxo_com = ark_bls12_377::G1Affine::new(
+        public_inputs[PaymentGrothPublicInput::COMMITMENT_X as usize],
+        public_inputs[PaymentGrothPublicInput::COMMITMENT_Y as usize]
     );
+    add_coin_to_state((*state).borrow_mut(), &utxo_com);
 
     drop(state);
 
     "success".to_string()
 }
 
-
 fn initialize_state() -> AppStateType {
 
-    // let dummy_hash: Vec<u8> = <ark_crypto_primitives::crh::sha256::Sha256 as CRHScheme>::
-    //     evaluate(&(), [0u8; 32]).unwrap();
+    let (_, vc_params, crs) = utils::trusted_setup();
 
-    let records: Vec<Vec<u8>> = (0..(1 << MERKLE_TREE_LEVELS))
-        .map(|_| [0u8; 32].to_vec())
+    let records: Vec<ark_bls12_377::G1Affine> = (0..(1 << MERKLE_TREE_LEVELS))
+        .map(|_| utils::get_dummy_utxo(&crs).commitment().into_affine())
         .collect();
 
-    let vc_params = JZVectorCommitmentParams::trusted_setup(&mut test_rng());
-    let db = JZVectorDB::<Vec<u8>>::new(&vc_params, &records);
-    
-    // let merkle_tree = FrontierMerkleTreeWithHistory::new(
-    //     MERKLE_TREE_LEVELS, ROOT_HISTORY_SIZE
-    // );
+    let db = JZVectorDB::<ark_bls12_377::G1Affine>::new(&vc_params, &records);
 
-    //assert_eq!(db.commitment(), merkle_tree.get_latest_root());
 
     let (_onramp_pk, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
     let (_payment_pk, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
@@ -207,34 +196,17 @@ fn initialize_state() -> AppStateType {
     }
 }
 
-fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
-    // lets first serialize the commitment to 32 bytes, as it encodes a sha256 hash
-    let mut com_as_bytes: Vec<u8> = Vec::new();
-    com.serialize_compressed(&mut com_as_bytes).unwrap();
-    let com_as_bytes = com_as_bytes[0..32].to_vec();
+fn add_coin_to_state(state: &mut AppStateType, com: &ark_bls12_377::G1Affine) {
 
     let leaf_index = (*state).num_coins;
 
-    // add it to the frontier merkle tree
-    //(*state).merkle_tree_frontier.insert(&com_as_bytes);
-    let old_merkle_proof = JZVectorCommitmentOpeningProof::<Vec<u8>> {
-        root: (*state).db.commitment(),
-        record: (*state).db.get_record(leaf_index).clone(),
-        path: (*state).db.proof(leaf_index),
-    };
+    let old_merkle_proof = assemble_merkle_proof(state, leaf_index);
 
     // add it to the vector db
-    (*state).db.update(leaf_index as usize, &com_as_bytes);
+    (*state).db.update(leaf_index as usize, &com);
     (*state).num_coins += 1;
 
-    let new_merkle_proof = JZVectorCommitmentOpeningProof::<Vec<u8>> {
-        root: (*state).db.commitment(),
-        record: (*state).db.get_record(leaf_index).clone(),
-        path: (*state).db.proof(leaf_index),
-    };
-
-    //check the invariant that the frontier tree is consistent with the vector db
-    //assert_eq!((*state).db.commitment(), (*state).merkle_tree_frontier.get_latest_root());
+    let new_merkle_proof = assemble_merkle_proof(state, leaf_index);
 
     let (proof, public_inputs) = merkle_update_circuit::generate_groth_proof(
         &(*state).merkle_update_pk,
@@ -250,4 +222,16 @@ fn add_coin_to_state(state: &mut AppStateType, com: &ConstraintF) {
     ).unwrap();
 
     assert!(valid_proof);
+}
+
+
+fn assemble_merkle_proof(
+    state: &AppStateType,
+    index: usize
+) -> JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine> {
+    JZVectorCommitmentOpeningProof::<ark_bls12_377::G1Affine> {
+        root: state.db.commitment(),
+        record: state.db.get_record(index).clone(),
+        path: state.db.proof(index),
+    }
 }
