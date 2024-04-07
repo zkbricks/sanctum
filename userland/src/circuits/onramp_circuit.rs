@@ -111,7 +111,7 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
 
         // NOTE: we are assuming to_bytes uses little-endian encoding, which I believe it does
         let utxo_commitment_x_input_var_bytes = utxo_commitment_x_input_var.to_bytes().unwrap();
-        let utxo_commitment_x_computed_var_bytes = utxo_var.commitment.x.to_bytes().unwrap();
+        let utxo_commitment_x_computed_var_bytes = utxo_var.commitment.to_affine().unwrap().x.to_bytes().unwrap();
         assert!(utxo_commitment_x_input_var_bytes.len() == utxo_commitment_x_computed_var_bytes.len());
         utxo_commitment_x_input_var_bytes
             .iter()
@@ -120,7 +120,7 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
 
 
         let utxo_commitment_y_input_var_bytes = utxo_commitment_y_input_var.to_bytes().unwrap();
-        let utxo_commitment_y_computed_var_bytes = utxo_var.commitment.y.to_bytes().unwrap();
+        let utxo_commitment_y_computed_var_bytes = utxo_var.commitment.to_affine().unwrap().y.to_bytes().unwrap();
         assert!(utxo_commitment_y_input_var_bytes.len() == utxo_commitment_y_computed_var_bytes.len());
         utxo_commitment_y_input_var_bytes
             .iter()
@@ -186,8 +186,8 @@ pub fn generate_groth_proof(
     let public_inputs: Vec<ConstraintF> = vec![
         asset_id,
         amount,
-        circuit.utxo.commitment().x,
-        circuit.utxo.commitment().y
+        circuit.utxo.commitment().into_affine().x,
+        circuit.utxo.commitment().into_affine().y
     ];
 
     let seed = [0u8; 32];

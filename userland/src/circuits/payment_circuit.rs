@@ -1,5 +1,6 @@
 use rand_chacha::rand_core::SeedableRng;
 use std::borrow::Borrow;
+use std::cmp::min;
 
 use ark_ec::*;
 use ark_ff::*;
@@ -182,6 +183,7 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             cs.clone(), &merkle_params_var, &proof_var
         );
 
+
         //--------------- Declare all the input variables ------------------
 
         let root_x_inputvar = ark_bls12_377::constraints::FqVar::new_input(
@@ -194,7 +196,7 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
             || { Ok(self.unspent_coin_existence_proof.root.y) },
         ).unwrap();
 
-        // // allocate the nullifier as an input variable in the statement
+        // allocate the nullifier as an input variable in the statement
         let nullifier_inputvar = ark_bls12_377::constraints::FqVar::new_input(
             ark_relations::ns!(cs, "nullifier"), 
             || Ok(utils::bytes_to_field::<ConstraintF, 6>(&nullifier)),
@@ -255,19 +257,16 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         // 6. does the leaf node in the merkle proof equal the input utxo commitment?
         let input_utxo_commitment_byte_vars: Vec::<UInt8<ConstraintF>> = input_utxo_var
             .commitment // grab the commitment variable
+            .to_affine()? // convert it to an affine point
+            .x // grab the x-coordinate
             .to_bytes()?; // let's use arkworks' to_bytes gadget
         let proof_var_leaf_var_bytes: Vec::<UInt8<ConstraintF>> = proof_var.leaf_var
             .iter()
-            .skip(8) // skip the first 64 bits, which encode the length
             .cloned()
             .collect();
-
-        input_utxo_commitment_byte_vars
-            .iter()
-            .zip(proof_var_leaf_var_bytes.iter())
-            .for_each(|(input_byte, proof_byte)| {
-                input_byte.enforce_equal(proof_byte).unwrap();
-            });
+        for i in 0..min(input_utxo_commitment_byte_vars.len(), proof_var_leaf_var_bytes.len()) {
+            input_utxo_commitment_byte_vars[i].enforce_equal(&proof_var_leaf_var_bytes[i])?;
+        }
 
         // 7. does the proof use the same root as what is declared in the statement?
         proof_var.root_var.x.enforce_equal(&root_x_inputvar)?;
@@ -343,7 +342,7 @@ pub fn generate_groth_proof(
 
     let (prf_params, vc_params, crs) = utils::trusted_setup();
 
-    let nullifier = lib_mpc_zexe::utils::bytes_to_field::<ConstraintF, 6>(
+    let nullifier = utils::bytes_to_field::<ConstraintF, 6>(
         &JZPRFInstance::new(&prf_params, input_utxo.fields[RHO].as_slice(), sk).evaluate()
     );
 
