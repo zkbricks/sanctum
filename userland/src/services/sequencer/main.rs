@@ -3,7 +3,6 @@ use ark_ec::CurveGroup;
 use ark_bw6_761::BW6_761;
 use ark_groth16::*;
 use ark_snark::SNARK;
-use ark_std::test_rng;
 use std::borrow::BorrowMut;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -149,10 +148,6 @@ async fn process_payment_tx(
     let (groth_proof, public_inputs) = 
         protocol::groth_proof_from_bs58(&proof.into_inner());
 
-    // let stmt_root = public_inputs[PaymentGrothPublicInput::ROOT as usize];
-    // let mut stmt_root_as_bytes: Vec<u8> = Vec::new();
-    // stmt_root.serialize_compressed(&mut stmt_root_as_bytes).unwrap();
-
     let valid_proof = Groth16::<BW6_761>::verify(
         &(*state).payment_vk,
         &public_inputs,
@@ -205,28 +200,13 @@ fn add_coin_to_state(state: &mut AppStateType, com: &ark_bls12_377::G1Affine) {
 
     let leaf_index = (*state).num_coins;
 
-    // add it to the frontier merkle tree
-    //(*state).merkle_tree_frontier.insert(&com_as_bytes);
-    // let old_merkle_proof = JZVectorCommitmentOpeningProof::<ark_bls12_377::G1Affine> {
-    //     root: (*state).db.commitment(),
-    //     record: (*state).db.get_record(leaf_index).clone(),
-    //     path: (*state).db.proof(leaf_index),
-    // };
     let old_merkle_proof = assemble_merkle_proof(state, leaf_index);
 
     // add it to the vector db
     (*state).db.update(leaf_index as usize, &com);
     (*state).num_coins += 1;
 
-    // let new_merkle_proof = JZVectorCommitmentOpeningProof::<ark_bls12_377::G1Affine> {
-    //     root: (*state).db.commitment(),
-    //     record: (*state).db.get_record(leaf_index).clone(),
-    //     path: (*state).db.proof(leaf_index),
-    // };
     let new_merkle_proof = assemble_merkle_proof(state, leaf_index);
-
-    //check the invariant that the frontier tree is consistent with the vector db
-    //assert_eq!((*state).db.commitment(), (*state).merkle_tree_frontier.get_latest_root());
 
     let (proof, public_inputs) = merkle_update_circuit::generate_groth_proof(
         &(*state).merkle_update_pk,
@@ -241,7 +221,7 @@ fn add_coin_to_state(state: &mut AppStateType, com: &ark_bls12_377::G1Affine) {
         &proof
     ).unwrap();
 
-    //assert!(valid_proof);
+    assert!(valid_proof);
 }
 
 

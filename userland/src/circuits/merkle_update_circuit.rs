@@ -257,7 +257,12 @@ pub fn generate_groth_proof(
     let seed = [0u8; 32];
     let mut rng = rand_chacha::ChaCha8Rng::from_seed(seed);
 
+    let now = std::time::Instant::now();
     let proof = Groth16::<BW6_761>::prove(&pk, circuit, &mut rng).unwrap();
+    println!("payment proof generated in {}.{} secs", 
+        now.elapsed().as_secs(),
+        now.elapsed().subsec_millis()
+    );
     
     (proof, public_inputs)
 }
