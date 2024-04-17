@@ -15,7 +15,9 @@ use ark_crypto_primitives::to_uncompressed_bytes;
 
 use lib_mpc_zexe::vector_commitment;
 use lib_mpc_zexe::vector_commitment::bytes::pedersen::{
-    *, constraints::*, constraints::JubJubMerkleTreeParamsVar, common::JubJubMerkleTreeParams
+    *, constraints::*, constraints::JZVectorCommitmentParamsVar,
+    config::ed_on_bw6_761::MerkleTreeParams as MTParams,
+    config::ed_on_bw6_761::MerkleTreeParamsVar as MTParamsVar,
 };
 use lib_mpc_zexe::merkle_tree::constraints::PathVar;
 
@@ -43,21 +45,21 @@ pub enum GrothPublicInput {
 /// MerkleUpdateCircuit proves that the Merkle tree is updated correctly
 pub struct MerkleUpdateCircuit {
     /// public parameters for the vector commitment scheme
-    pub vc_params: JZVectorCommitmentParams,
+    pub vc_params: JZVectorCommitmentParams<MTParams>,
 
     pub leaf_index: usize,
 
     /// Merkle proof for leaf index
-    pub old_merkle_proof: JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>,
+    pub old_merkle_proof: JZVectorCommitmentOpeningProof<MTParams, ark_bls12_377::G1Affine>,
 
     /// Merkle proof for leaf index
-    pub new_merkle_proof: JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>,
+    pub new_merkle_proof: JZVectorCommitmentOpeningProof<MTParams, ark_bls12_377::G1Affine>,
 }
 
 fn enforce_path_equality(
     _cs: ConstraintSystemRef<ConstraintF>,
-    path1: &PathVar<JubJubMerkleTreeParams, ConstraintF, JubJubMerkleTreeParamsVar>,
-    path2: &PathVar<JubJubMerkleTreeParams, ConstraintF, JubJubMerkleTreeParamsVar>
+    path1: &PathVar<MTParams, ConstraintF, MTParamsVar>,
+    path2: &PathVar<MTParams, ConstraintF, MTParamsVar>
 ) -> Result<()> {
         path1.path.enforce_equal(&path2.path)?;
         path1.auth_path.enforce_equal(&path2.auth_path)?;
@@ -193,13 +195,14 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
         let leaf_index = 0 as usize;
         // let's create a database of coins, and generate a merkle proof
         // we need this in order to create a circuit with appropriate public inputs
-        let db = JZVectorDB::<ark_bls12_377::G1Affine>::new(&vc_params, &records);
+        let db = JZVectorDB::<MTParams, ark_bls12_377::G1Affine>::new(vc_params, &records);
         let merkle_proof = JZVectorCommitmentOpeningProof {
             root: db.commitment(),
             record: db.get_record(leaf_index).clone(),
             path: db.proof(leaf_index),
         };
 
+        let (_, vc_params, _) = utils::trusted_setup();
         // note that circuit setup does not care about the values of witness variables
         MerkleUpdateCircuit {
             vc_params: vc_params,
@@ -221,8 +224,8 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
 
 pub fn generate_groth_proof(
     pk: &ProvingKey<BW6_761>,
-    old_merkle_proof: &JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>,
-    new_merkle_proof: &JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>,
+    old_merkle_proof: &JZVectorCommitmentOpeningProof<MTParams, ark_bls12_377::G1Affine>,
+    new_merkle_proof: &JZVectorCommitmentOpeningProof<MTParams, ark_bls12_377::G1Affine>,
     leaf_index: usize,
 ) -> (Proof<BW6_761>, Vec<ConstraintF>) {
 

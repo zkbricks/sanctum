@@ -7,8 +7,12 @@ use std::borrow::BorrowMut;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use lib_sanctum::protocol;
+
 use lib_mpc_zexe::vector_commitment::bytes::pedersen::*;
-use lib_mpc_zexe::protocol::{self as protocol};
+use lib_mpc_zexe::vector_commitment::bytes::pedersen::config::ed_on_bw6_761::MerkleTreeParams as MTParams;
+
+
 
 use lib_sanctum::merkle_update_circuit;
 use lib_sanctum::utils;
@@ -43,7 +47,7 @@ pub struct AppStateType {
     merkle_update_pk: ProvingKey<BW6_761>,
     merkle_update_vk: VerifyingKey<BW6_761>,
 
-    db: JZVectorDB<ark_bls12_377::G1Affine>, //leaves of sha256 hashes
+    db: JZVectorDB<MTParams, ark_bls12_377::G1Affine>, //leaves of sha256 hashes
     //merkle_tree_frontier: FrontierMerkleTreeWithHistory,
     num_coins: usize,
 }
@@ -84,14 +88,14 @@ async fn serve_merkle_proof_request(
     let index: usize = index.into_inner();
 
     let merkle_proof = 
-        JZVectorCommitmentOpeningProof::<ark_bls12_377::G1Affine> {
+        JZVectorCommitmentOpeningProof::<MTParams, ark_bls12_377::G1Affine> {
             root: (*state).db.commitment(),
             record: (*state).db.get_record(index).clone(),
             path: (*state).db.proof(index),
         };
 
     let merkle_proof_bs58 = 
-        lib_mpc_zexe::protocol::jubjub_vector_commitment_opening_proof_to_bs58(
+        protocol::jubjub_vector_commitment_opening_proof_MTEdOnBw6_761_to_bs58(
             &merkle_proof
         );
 
@@ -179,7 +183,7 @@ fn initialize_state() -> AppStateType {
         .map(|_| utils::get_dummy_utxo(&crs).commitment().into_affine())
         .collect();
 
-    let db = JZVectorDB::<ark_bls12_377::G1Affine>::new(&vc_params, &records);
+    let db = JZVectorDB::<MTParams, ark_bls12_377::G1Affine>::new(vc_params, &records);
 
 
     let (_onramp_pk, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
@@ -228,8 +232,8 @@ fn add_coin_to_state(state: &mut AppStateType, com: &ark_bls12_377::G1Affine) {
 fn assemble_merkle_proof(
     state: &AppStateType,
     index: usize
-) -> JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine> {
-    JZVectorCommitmentOpeningProof::<ark_bls12_377::G1Affine> {
+) -> JZVectorCommitmentOpeningProof<MTParams, ark_bls12_377::G1Affine> {
+    JZVectorCommitmentOpeningProof::<MTParams, ark_bls12_377::G1Affine> {
         root: state.db.commitment(),
         record: state.db.get_record(index).clone(),
         path: state.db.proof(index),

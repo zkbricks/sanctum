@@ -12,9 +12,9 @@ use ark_ff::{
 };
 
 use lib_mpc_zexe::prf::JZPRFParams;
-use lib_mpc_zexe::record_commitment::kzg::JZKZGCommitmentParams;
+use lib_mpc_zexe::record_commitment::kzg::{JZRecord, JZKZGCommitmentParams};
 use lib_mpc_zexe::vector_commitment::bytes::pedersen::JZVectorCommitmentParams;
-use lib_mpc_zexe::record_commitment::kzg::JZRecord;
+use lib_mpc_zexe::vector_commitment::bytes::pedersen::config::ed_on_bw6_761::MerkleTreeParams as MTParams;
 
 pub fn write_groth_key_to_file(
     pk: &ProvingKey<BW6_761>,
@@ -72,7 +72,7 @@ fn get_file_as_byte_vec(filename: &str) -> Vec<u8> {
     buffer
 }
 
-pub fn trusted_setup() -> (JZPRFParams, JZVectorCommitmentParams, JZKZGCommitmentParams<5>) {
+pub fn trusted_setup() -> (JZPRFParams, JZVectorCommitmentParams<MTParams>, JZKZGCommitmentParams<5>) {
     let seed = [0u8; 32];
     let mut rng = rand_chacha::ChaCha8Rng::from_seed(seed);
 

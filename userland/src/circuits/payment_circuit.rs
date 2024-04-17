@@ -12,7 +12,11 @@ use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_snark::SNARK;
 
 use lib_mpc_zexe::vector_commitment;
-use lib_mpc_zexe::vector_commitment::bytes::pedersen::{*, constraints::*};
+use lib_mpc_zexe::vector_commitment::bytes::pedersen::{
+    *, constraints::*, constraints::JZVectorCommitmentParamsVar,
+    config::ed_on_bw6_761::MerkleTreeParams as MTParams,
+    config::ed_on_bw6_761::MerkleTreeParamsVar as MTParamsVar,
+};
 use lib_mpc_zexe::record_commitment::kzg::{*, constraints::*};
 use lib_mpc_zexe::prf::{*, constraints::*};
 
@@ -47,7 +51,7 @@ pub struct PaymentCircuit {
     pub prf_params: JZPRFParams,
 
      /// public parameters for the vector commitment scheme
-     pub vc_params: JZVectorCommitmentParams,
+     pub vc_params: JZVectorCommitmentParams<MTParams>,
 
     /// all fields of the input utxo, for the asset owned by the sender
     pub input_utxo: JZRecord<5>,
@@ -59,7 +63,7 @@ pub struct PaymentCircuit {
     pub sk: [u8; 32],
 
     /// Merkle opening proof for proving existence of the unspent coin
-    pub unspent_coin_existence_proof: JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>,
+    pub unspent_coin_existence_proof: JZVectorCommitmentOpeningProof<MTParams, ark_bls12_377::G1Affine>,
 }
 
 /// ConstraintSynthesizer is a trait that is implemented for the OnRampCircuit;
@@ -173,7 +177,9 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         // Here, we will prove that the commitment to the spent coin
         // exists in the merkle tree of all created coins
 
-        let proof_var = JZVectorCommitmentOpeningProofVar::new_witness(
+        let proof_var = JZVectorCommitmentOpeningProofVar
+        ::<ConstraintF, MTParams, MTParamsVar>
+        ::new_witness(
             cs.clone(),
             || Ok(&self.unspent_coin_existence_proof)
         ).unwrap();
@@ -303,13 +309,14 @@ pub fn circuit_setup() -> (ProvingKey<BW6_761>, VerifyingKey<BW6_761>) {
     
         // let's create a database of coins, and generate a merkle proof
         // we need this in order to create a circuit with appropriate public inputs
-        let db = JZVectorDB::<ark_bls12_377::G1Affine>::new(&vc_params, &records[..]);
+        let db = JZVectorDB::<MTParams, ark_bls12_377::G1Affine>::new(vc_params, &records[..]);
         let merkle_proof = JZVectorCommitmentOpeningProof {
             root: db.commitment(),
             record: db.get_record(0).clone(),
             path: db.proof(0),
         };
 
+        let (_, vc_params, _) = utils::trusted_setup();
         // note that circuit setup does not care about the values of witness variables
         PaymentCircuit {
             crs: crs.clone(),
@@ -336,7 +343,7 @@ pub fn generate_groth_proof(
     pk: &ProvingKey<BW6_761>,
     input_utxo: &JZRecord<5>,
     output_utxo: &JZRecord<5>,
-    unspent_coin_existence_proof: &JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>,
+    unspent_coin_existence_proof: &JZVectorCommitmentOpeningProof<MTParams, ark_bls12_377::G1Affine>,
     sk: &[u8; 32]
 ) -> (Proof<BW6_761>, Vec<ConstraintF>) {
 

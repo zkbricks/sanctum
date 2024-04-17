@@ -3,12 +3,15 @@ use reqwest::Client;
 use ark_ff::{*};
 
 use lib_mpc_zexe::record_commitment::kzg::*;
-use lib_mpc_zexe::vector_commitment::bytes::pedersen::JZVectorCommitmentOpeningProof;
+use lib_mpc_zexe::vector_commitment::bytes::pedersen::{
+    JZVectorCommitmentOpeningProof,
+    config::ed_on_bw6_761::MerkleTreeParams as MTParams,
+};
 
-use lib_sanctum::{payment_circuit, onramp_circuit, utils};
+use lib_sanctum::{payment_circuit, onramp_circuit, utils, protocol};
 
 async fn request_merkle_proof(index: usize)
--> reqwest::Result<JZVectorCommitmentOpeningProof<ark_bls12_377::G1Affine>> {
+-> reqwest::Result<JZVectorCommitmentOpeningProof<MTParams, ark_bls12_377::G1Affine>> {
     let client = Client::new();
     let response = client.get("http://127.0.0.1:8080/merkle")
         .json(&index)
@@ -17,12 +20,12 @@ async fn request_merkle_proof(index: usize)
         .text()
         .await?;
 
-    Ok(lib_mpc_zexe::protocol::jubjub_vector_commitment_opening_proof_from_bs58(
+    Ok(protocol::jubjub_vector_commitment_opening_proof_MTEdOnBw6_761_from_bs58(
         &serde_json::from_str(&response).unwrap())
     )
 }
 
-async fn submit_onramp_transaction(item: lib_mpc_zexe::protocol::GrothProofBs58) -> reqwest::Result<()> {
+async fn submit_onramp_transaction(item: crate::protocol::GrothProofBs58) -> reqwest::Result<()> {
     let client = Client::new();
     let response = client.post("http://127.0.0.1:8080/onramp")
         .json(&item)
@@ -38,7 +41,7 @@ async fn submit_onramp_transaction(item: lib_mpc_zexe::protocol::GrothProofBs58)
     Ok(())
 }
 
-async fn submit_payment_transaction(item: lib_mpc_zexe::protocol::GrothProofBs58) -> reqwest::Result<()> {
+async fn submit_payment_transaction(item: crate::protocol::GrothProofBs58) -> reqwest::Result<()> {
     let client = Client::new();
     let response = client.post("http://127.0.0.1:8080/payment")
         .json(&item)
@@ -75,7 +78,7 @@ async fn main() -> reqwest::Result<()> {
             &onramp_pk,
             &alice_on_ramp_coin()
         );
-        lib_mpc_zexe::protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
+        crate::protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
     }).await?;
 
     println!("requesting merkle path...");
@@ -90,7 +93,7 @@ async fn main() -> reqwest::Result<()> {
             &alice_merkle_proof,
             &alice_key().0
         );
-        lib_mpc_zexe::protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
+        crate::protocol::groth_proof_to_bs58(&groth_proof.0, &groth_proof.1)
     }).await?;
 
     Ok(())
