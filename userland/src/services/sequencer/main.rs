@@ -130,7 +130,7 @@ async fn process_onramp_tx(
         .unwrap();
 
     if response.status().is_success() {
-        println!("verifier successfully processed onramp tx");
+        println!("verifier successfully processed onramp tx\n");
         return "OK".to_string(); // TODO: this should be protocol-ized
     } else {
         println!("verifier failed to process onramp tx {:?}", response.status());
@@ -185,7 +185,7 @@ async fn process_payment_tx(
         .unwrap();
 
     if response.status().is_success() {
-        println!("verifier successfully processed payment tx");
+        println!("verifier successfully processed payment tx\n");
         return "OK".to_string(); // TODO: this should be protocol-ized
     } else {
         println!("verifier failed to process payment tx {:?}", response.status());

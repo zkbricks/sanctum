@@ -10,8 +10,6 @@ use std::time::Instant;
 
 use lib_sanctum::protocol;
 
-use lib_sanctum::utils;
-
 const ROOT_HISTORY_SIZE: u32 = 30;
 
 
@@ -67,16 +65,8 @@ async fn process_onramp_tx(
     println!("onramp proof verified in {}.{} secs", 
         now.elapsed().as_secs(), now.elapsed().subsec_millis());
 
-    // let's parse the merkle update proof
-    let (proof, public_inputs) = 
-        protocol::groth_proof_from_bs58(&input_proofs.merkle_update_proof);
-    let now = Instant::now();
-    assert!(Groth16::<BW6_761>::verify(&(*state).merkle_update_vk, &public_inputs, &proof).unwrap());
-    println!("merkle update proof verified in {}.{} secs", 
-        now.elapsed().as_secs(), now.elapsed().subsec_millis());
-
     // record the new merkle root if it extends the old root
-    update_state(state.borrow_mut(), &input_proofs.merkle_update_proof);
+    update_merkle_root(state.borrow_mut(), &input_proofs.merkle_update_proof);
 
     drop(state);
     return "OK".to_string();
@@ -93,11 +83,6 @@ async fn process_payment_tx(
 
     let input_proofs = input.into_inner();
 
-    // let's parse the onramp proof
-    let (proof, public_inputs) = 
-        protocol::groth_proof_from_bs58(&input_proofs.payment_proof);
-
-
     // check if proof is constructed w.r.t. a known merkle root
     let claimed_root_x = input_proofs
         .payment_proof
@@ -109,32 +94,48 @@ async fn process_payment_tx(
         .clone();
     assert!(state.merkle_root_history.is_known_root(&(claimed_root_x, claimed_root_y)));
 
+    // let's parse the onramp proof
+    let (proof, public_inputs) =
+        protocol::groth_proof_from_bs58(&input_proofs.payment_proof);
 
-    // let's verify the onramp proof
+    // let's verify the payment proof
     let now = Instant::now();
     assert!(Groth16::<BW6_761>::verify(&(*state).payment_vk, &public_inputs, &proof).unwrap());
-    println!("onramp proof verified in {}.{} secs", 
-        now.elapsed().as_secs(), now.elapsed().subsec_millis());
-
-    // let's parse the merkle update proof
-    let (proof, public_inputs) = 
-        protocol::groth_proof_from_bs58(&input_proofs.merkle_update_proof);
-    let now = Instant::now();
-    assert!(Groth16::<BW6_761>::verify(&(*state).merkle_update_vk, &public_inputs, &proof).unwrap());
-    println!("merkle update proof verified in {}.{} secs", 
+    println!("payment proof verified in {}.{} secs",
         now.elapsed().as_secs(), now.elapsed().subsec_millis());
 
     // record the new merkle root if it extends the old root
-    update_state(state.borrow_mut(), &input_proofs.merkle_update_proof);
+    update_merkle_root(state.borrow_mut(), &input_proofs.merkle_update_proof);
 
     drop(state);
     return "OK".to_string();
 
 }
 
-fn update_state(state: &mut AppStateType, merkle_update_proof: &protocol::GrothProofBs58) {
-    // TODO: check that we are extending from the latest old root
+fn update_merkle_root(state: &mut AppStateType, merkle_update_proof: &protocol::GrothProofBs58) {
+    // check that we are extending from the latest old root
+    if let Some(latest_root) = state.merkle_root_history.get_latest_root() {
+        let old_root_x = merkle_update_proof
+            .public_inputs[protocol::MerkleUpdateGrothPublicInput::OLD_ROOT_X as usize]
+            .clone();
+        let old_root_y = merkle_update_proof
+            .public_inputs[protocol::MerkleUpdateGrothPublicInput::OLD_ROOT_Y as usize]
+            .clone();
 
+        assert!(latest_root == (old_root_x, old_root_y));
+    } // else is for the first ever root
+
+    // let's parse the merkle update proof
+    let (proof, public_inputs) = 
+        protocol::groth_proof_from_bs58(&merkle_update_proof);
+
+    // verify the proof
+    let now = Instant::now();
+    assert!(Groth16::<BW6_761>::verify(&(*state).merkle_update_vk, &public_inputs, &proof).unwrap());
+    println!("merkle update proof verified in {}.{} secs\n",
+        now.elapsed().as_secs(), now.elapsed().subsec_millis());
+
+    // store the new root
     let new_root_x = merkle_update_proof
     .public_inputs[protocol::MerkleUpdateGrothPublicInput::NEW_ROOT_X as usize]
     .clone();
@@ -147,9 +148,6 @@ fn update_state(state: &mut AppStateType, merkle_update_proof: &protocol::GrothP
 }
 
 fn initialize_state() -> AppStateType {
-
-    let (_, vc_params, crs) = utils::trusted_setup();
-
     let (_, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
     let (_, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
     let (_, merkle_update_vk) = lib_sanctum::merkle_update_circuit::circuit_setup();
@@ -204,6 +202,11 @@ impl MerkleRootHistory {
         }
 
         return false;
+    }
+
+    pub fn get_latest_root(&self) -> Option<Hash> {
+        let last_index: u32 = self.next_root_index - 1;
+        return self.historical_roots.get(&last_index).cloned();
     }
 }
 
