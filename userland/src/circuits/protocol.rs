@@ -240,67 +240,33 @@ pub fn jubjub_vector_commitment_opening_proof_MTEdOnBls12_377_from_bs58(
     }
 }
 
-/// LotteryOrder is submitted by the client to the MPC subnet
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct LotteryOrder {
-    pub input_coin: CoinBs58,
-    pub input_coin_local_proof: GrothProofBs58,
-    pub placeholder_output_coin: CoinBs58,
+
+#[allow(non_camel_case_types)]
+pub enum PaymentGrothPublicInput {
+    ROOT_X = 0, // merkle root for proving membership of input utxo
+    ROOT_Y = 1, // merkle root for proving membership of input utxo
+    NULLIFIER = 2, // nullifier to the input utxo
+    COMMITMENT_X = 3, // commitment of the output utxo
+    COMMITMENT_Y = 4, // commitment of the output utxo
 }
 
-/// LotteryMatch is the message sent by the matchmaker to the SNARK prover
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LotteryMatch {
-    /// orders entering the lottery
-    pub input_orders: Vec<LotteryOrder>,
-    /// which of the orders is the winner?
-    pub winner_index: u64,
-    /// the correction to the placeholder coin
-    pub amount_correction: FieldElementBs58,
+#[allow(non_camel_case_types)]
+pub enum OnrampGrothPublicInput {
+    ASSET_ID = 0,
+    AMOUNT = 1,
+    COMMITMENT_X = 2,
+    COMMITMENT_Y = 3,
 }
 
-/// LotteryOrder is submitted by the client to the MPC subnet
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SwapOrder {
-    pub input_coin: CoinBs58,
-    pub input_coin_local_proof: GrothProofBs58,
-    pub placeholder_output_coin: CoinBs58,
-    pub placeholder_refund_coin: CoinBs58,
-}
-
-/// LotteryMatch is the message sent by the matchmaker to the SNARK prover
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwapMatch {
-    /// orders entering the swap
-    pub input_order_a: SwapOrder,
-    pub input_order_b: SwapOrder,
-    /// the correction to the placeholder refund coin
-    pub amount_correction_a: FieldElementBs58,
-    pub amount_correction_b: FieldElementBs58,
-}
-
-
-/// AppTransaction is submitted by the MPC subnet to the L1 contract
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppTransaction {
-    /// Groth16 proofs for spent coin and placeholder coin
-    pub local_proofs: Vec<GrothProofBs58>,
-    /// Collaborative PLONK proof for the relation 
-    /// between spent coins and created coins
-    pub collaborative_prooof: PlonkProofBs58,
-    /// which of the orders
-    pub placeholder_selector: Vec<bool>,
-    /// the correction to the placeholder coin
-    pub amount_correction: Vec<FieldElementBs58>,
-}
-
-/// OnRampTransaction is submitted by the client to the L1 contract
-/// to deposit L1 assets into wrapped L1 assets.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OnRampTransaction {
-    /// proof attesting to the validity 
-    /// of the created coin commitment
-    pub proof: GrothProofBs58,
+#[allow(non_camel_case_types)]
+pub enum MerkleUpdateGrothPublicInput {
+    LEAF_INDEX = 0, // index (starting at 0) of the leaf node being inserted
+    LEAF_VALUE_X = 1, // leaf being inserted
+    LEAF_VALUE_Y = 2, // leaf being inserted
+    OLD_ROOT_X = 3, // merkle tree root before the update
+    OLD_ROOT_Y = 4, // merkle tree root before the update
+    NEW_ROOT_X = 5, // merkle tree root after the update
+    NEW_ROOT_Y = 6, // merkle tree root after the update
 }
 
 
@@ -318,6 +284,18 @@ pub struct CoinBs58 {
 pub struct GrothProofBs58 {
     pub proof: String,
     pub public_inputs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnRampProofBs58 {
+    pub on_ramp_proof: GrothProofBs58,
+    pub merkle_update_proof: GrothProofBs58
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymentProofBs58 {
+    pub payment_proof: GrothProofBs58,
+    pub merkle_update_proof: GrothProofBs58
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

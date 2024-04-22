@@ -10,6 +10,10 @@ name = "lib_sanctum"
 path = "src/circuits/lib.rs"
 
 [[bin]]
+name = "verifier"
+path = "src/services/verifier/main.rs"
+
+[[bin]]
 name = "sequencer"
 path = "src/services/sequencer/main.rs"
 

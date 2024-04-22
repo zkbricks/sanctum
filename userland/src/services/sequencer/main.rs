@@ -1,8 +1,11 @@
 use actix_web::{web, App, HttpServer};
+use reqwest::Client;
+
 use ark_ec::CurveGroup;
 use ark_bw6_761::BW6_761;
 use ark_groth16::*;
 use ark_snark::SNARK;
+
 use std::borrow::BorrowMut;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -12,40 +15,17 @@ use lib_sanctum::protocol;
 use lib_mpc_zexe::vector_commitment::bytes::pedersen::*;
 use lib_mpc_zexe::vector_commitment::bytes::pedersen::config::ed_on_bw6_761::MerkleTreeParams as MTParams;
 
-
-
 use lib_sanctum::merkle_update_circuit;
 use lib_sanctum::utils;
 
-
 // define the depth of the merkle tree as a constant
 const MERKLE_TREE_LEVELS: u32 = 8;
-
-const _ROOT_HISTORY_SIZE: u32 = 30;
-
-#[allow(non_camel_case_types)]
-pub enum PaymentGrothPublicInput {
-    ROOT_X = 0, // merkle root for proving membership of input utxo
-    ROOT_Y = 1, // merkle root for proving membership of input utxo
-    NULLIFIER = 2, // nullifier to the input utxo
-    COMMITMENT_X = 3, // commitment of the output utxo
-    COMMITMENT_Y = 4, // commitment of the output utxo
-}
-
-#[allow(non_camel_case_types)]
-pub enum OnrampGrothPublicInput {
-    ASSET_ID = 0,
-    AMOUNT = 1,
-    COMMITMENT_X = 2,
-    COMMITMENT_Y = 3,
-}
 
 
 pub struct AppStateType {
     onramp_vk: VerifyingKey<BW6_761>,
     payment_vk: VerifyingKey<BW6_761>,
     merkle_update_pk: ProvingKey<BW6_761>,
-    merkle_update_vk: VerifyingKey<BW6_761>,
 
     db: JZVectorDB<MTParams, ark_bls12_377::G1Affine>, //leaves of sha256 hashes
     //merkle_tree_frontier: FrontierMerkleTreeWithHistory,
@@ -106,73 +86,111 @@ async fn serve_merkle_proof_request(
 
 async fn process_onramp_tx(
     global_state: web::Data<GlobalAppState>,
-    proof: web::Json<protocol::GrothProofBs58>
+    input: web::Json<protocol::GrothProofBs58>
 ) -> String {
-
-    let now = Instant::now();
 
     let mut state = global_state.state.lock().unwrap();
 
-    let (groth_proof, public_inputs) = 
-        protocol::groth_proof_from_bs58(&proof.into_inner());
+    let now = Instant::now();
 
-    let valid_proof = Groth16::<BW6_761>::verify(
-        &(*state).onramp_vk,
-        &public_inputs,
-        &groth_proof
-    ).unwrap();
-    assert!(valid_proof);
+    // instead of blindly forwarding the proof to the verifier, let's verify it here first
+    let (proof, public_inputs) = 
+        protocol::groth_proof_from_bs58(&input.clone());
 
-    println!("proof verified in {}.{} secs", 
+    assert!(Groth16::<BW6_761>::verify(&(*state).onramp_vk, &public_inputs, &proof).unwrap());
+
+    println!("on-ramp proof verified in {}.{} secs", 
         now.elapsed().as_secs(),
         now.elapsed().subsec_millis()
     );
 
+    // let's grab the utxo commitment being created by this tx
     let utxo_com = ark_bls12_377::G1Affine::new(
-        public_inputs[OnrampGrothPublicInput::COMMITMENT_X as usize],
-        public_inputs[OnrampGrothPublicInput::COMMITMENT_Y as usize]
+        public_inputs[protocol::OnrampGrothPublicInput::COMMITMENT_X as usize],
+        public_inputs[protocol::OnrampGrothPublicInput::COMMITMENT_Y as usize]
     );
-    add_coin_to_state((*state).borrow_mut(), &utxo_com);
+
+    // add utxo to state
+    let merkle_update_proof = add_coin_to_state((*state).borrow_mut(), &utxo_com);
 
     drop(state);
 
-    "success".to_string()
+    // let's forward the request to the verifier
+    let output = protocol::OnRampProofBs58 {
+        on_ramp_proof: input.clone(),
+        merkle_update_proof: merkle_update_proof,
+    };
+
+    // HTTP request to transmit the output to the verifier
+    let client = Client::new();
+    let response = client.post("http://127.0.0.1:8081/onramp")
+        .json(&output)
+        .send()
+        .await
+        .unwrap();
+
+    if response.status().is_success() {
+        println!("verifier successfully processed onramp tx");
+        return "OK".to_string(); // TODO: this should be protocol-ized
+    } else {
+        println!("verifier failed to process onramp tx {:?}", response.status());
+        return "FAILED".to_string(); // TODO: protocol-ize
+    }
 }
 
 // mirrors the logic on L1 contract, but stores the entire state (rather than frontier)
 async fn process_payment_tx(
     global_state: web::Data<GlobalAppState>,
-    proof: web::Json<protocol::GrothProofBs58>
+    tx: web::Json<protocol::GrothProofBs58>
 ) -> String {
-
-    let now = Instant::now();
 
     let mut state = global_state.state.lock().unwrap();
 
-    let (groth_proof, public_inputs) = 
-        protocol::groth_proof_from_bs58(&proof.into_inner());
+    let now = Instant::now();
 
-    let valid_proof = Groth16::<BW6_761>::verify(
-        &(*state).payment_vk,
-        &public_inputs,
-        &groth_proof
-    ).unwrap();
-    assert!(valid_proof);
+    // instead of blindly forwarding the proof to the verifier, let's verify it here first
+    let (proof, public_inputs) = 
+        protocol::groth_proof_from_bs58(&tx.clone());
 
-    println!("proof verified in {}.{} secs", 
+    assert!(Groth16::<BW6_761>::verify(&(*state).payment_vk, &public_inputs, &proof).unwrap());
+
+    println!("payment proof verified in {}.{} secs", 
         now.elapsed().as_secs(),
         now.elapsed().subsec_millis()
     );
 
+    // let's grab the utxo commitment being created by this tx
     let utxo_com = ark_bls12_377::G1Affine::new(
-        public_inputs[PaymentGrothPublicInput::COMMITMENT_X as usize],
-        public_inputs[PaymentGrothPublicInput::COMMITMENT_Y as usize]
+        public_inputs[protocol::PaymentGrothPublicInput::COMMITMENT_X as usize],
+        public_inputs[protocol::PaymentGrothPublicInput::COMMITMENT_Y as usize]
     );
-    add_coin_to_state((*state).borrow_mut(), &utxo_com);
+
+    // add utxo to state
+    let merkle_update_proof = add_coin_to_state((*state).borrow_mut(), &utxo_com);
 
     drop(state);
 
-    "success".to_string()
+    // let's forward the request to the verifier
+    let output = protocol::PaymentProofBs58 {
+        payment_proof: tx.clone(),
+        merkle_update_proof: merkle_update_proof,
+    };
+
+    // HTTP request to transmit the output to the verifier
+    let client = Client::new();
+    let response = client.post("http://127.0.0.1:8081/payment")
+        .json(&output)
+        .send()
+        .await
+        .unwrap();
+
+    if response.status().is_success() {
+        println!("verifier successfully processed payment tx");
+        return "OK".to_string(); // TODO: this should be protocol-ized
+    } else {
+        println!("verifier failed to process payment tx {:?}", response.status());
+        return "FAILED".to_string(); // TODO: protocol-ize
+    }
 }
 
 fn initialize_state() -> AppStateType {
@@ -186,21 +204,20 @@ fn initialize_state() -> AppStateType {
     let db = JZVectorDB::<MTParams, ark_bls12_377::G1Affine>::new(vc_params, &records);
 
 
-    let (_onramp_pk, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
-    let (_payment_pk, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
-    let (merkle_update_pk, merkle_update_vk) = lib_sanctum::merkle_update_circuit::circuit_setup();
+    let (_, onramp_vk) = lib_sanctum::onramp_circuit::circuit_setup();
+    let (_, payment_vk) = lib_sanctum::payment_circuit::circuit_setup();
+    let (merkle_update_pk, _) = lib_sanctum::merkle_update_circuit::circuit_setup();
 
     AppStateType {
         onramp_vk,
         payment_vk,
         merkle_update_pk,
-        merkle_update_vk,
         db,
         num_coins: 0 
     }
 }
 
-fn add_coin_to_state(state: &mut AppStateType, com: &ark_bls12_377::G1Affine) {
+fn add_coin_to_state(state: &mut AppStateType, com: &ark_bls12_377::G1Affine) -> protocol::GrothProofBs58 {
 
     let leaf_index = (*state).num_coins;
 
@@ -219,13 +236,7 @@ fn add_coin_to_state(state: &mut AppStateType, com: &ark_bls12_377::G1Affine) {
         leaf_index
     );
 
-    let valid_proof = Groth16::<BW6_761>::verify(
-        &(*state).merkle_update_vk,
-        &public_inputs,
-        &proof
-    ).unwrap();
-
-    assert!(valid_proof);
+    crate::protocol::groth_proof_to_bs58(&proof, &public_inputs)
 }
 
 

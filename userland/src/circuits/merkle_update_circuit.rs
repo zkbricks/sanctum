@@ -30,7 +30,7 @@ type ConstraintF = ark_bw6_761::Fr;
 const MERKLE_TREE_LEVELS: u32 = 8;
 
 // the public inputs in the Groth proof are ordered as follows
-#[allow(non_camel_case_types, unused)]
+#[allow(non_camel_case_types)]
 pub enum GrothPublicInput {
     LEAF_INDEX = 0, // index (starting at 0) of the leaf node being inserted
     LEAF_VALUE_X = 1, // leaf being inserted
@@ -262,7 +262,7 @@ pub fn generate_groth_proof(
 
     let now = std::time::Instant::now();
     let proof = Groth16::<BW6_761>::prove(&pk, circuit, &mut rng).unwrap();
-    println!("payment proof generated in {}.{} secs", 
+    println!("merkle update proof generated in {}.{} secs", 
         now.elapsed().as_secs(),
         now.elapsed().subsec_millis()
     );
