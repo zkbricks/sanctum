@@ -20,8 +20,8 @@ use lib_mpc_zexe::vector_commitment::bytes::pedersen::{
 use lib_mpc_zexe::record_commitment::kzg::{*, constraints::*};
 use lib_mpc_zexe::prf::{*, constraints::*};
 
-use super::{AMOUNT, ASSET_ID, RHO, OWNER};
 use super::utils;
+use super::protocol;
 
 // Finite Field used to encode the zk circuit
 type ConstraintF = ark_bw6_761::Fr;
@@ -132,7 +132,7 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         // nullifier encoded in the L1-destined proof is correct; 
         // we use the same idea as zCash here, where nullifier = PRF(rho; sk)
         let prf_instance_nullifier = JZPRFInstance::new(
-            &self.prf_params, self.input_utxo.fields[RHO].as_slice(), &self.sk
+            &self.prf_params, self.input_utxo.fields[protocol::UtxoField::RHO as usize].as_slice(), &self.sk
         );
         let nullifier = prf_instance_nullifier.evaluate();
 
@@ -229,11 +229,11 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
 
         // 2. does the nullifier PRF use rho as input?
         for (i, byte_var) in nullifier_prf_instance_var.input_var.iter().enumerate() {
-            byte_var.enforce_equal(&input_utxo_var.fields[RHO][i])?;
+            byte_var.enforce_equal(&input_utxo_var.fields[protocol::UtxoField::RHO as usize][i])?;
         }
 
         // 3. prove ownership of the coin. Does sk correspond to coin's pk?
-        for (i, byte_var) in input_utxo_var.fields[OWNER].iter().enumerate() {
+        for (i, byte_var) in input_utxo_var.fields[protocol::UtxoField::OWNER as usize].iter().enumerate() {
             byte_var.enforce_equal(&ownership_prf_instance_var.output_var[i])?;
         }
 
@@ -279,11 +279,11 @@ impl ConstraintSynthesizer<ConstraintF> for PaymentCircuit {
         proof_var.root_var.y.enforce_equal(&root_y_inputvar)?;
 
         // 8. conservation of asset value
-        for field in [AMOUNT, ASSET_ID] {
+        for field in [protocol::UtxoField::AMOUNT, protocol::UtxoField::ASSETID] {
             input_utxo_var
-            .fields[field]
+            .fields[field as usize]
             .iter()
-            .zip(output_utxo_var.fields[field].iter())
+            .zip(output_utxo_var.fields[field as usize].iter())
             .for_each(|(input_byte, output_byte)| {
                 input_byte.enforce_equal(output_byte).unwrap();
             });
@@ -350,7 +350,11 @@ pub fn generate_groth_proof(
     let (prf_params, vc_params, crs) = utils::trusted_setup();
 
     let nullifier = utils::bytes_to_field::<ConstraintF, 6>(
-        &JZPRFInstance::new(&prf_params, input_utxo.fields[RHO].as_slice(), sk).evaluate()
+        &JZPRFInstance::new(
+            &prf_params,
+            input_utxo.fields[protocol::UtxoField::RHO as usize].as_slice(),
+            sk)
+        .evaluate()
     );
 
     let circuit = PaymentCircuit {

@@ -23,6 +23,15 @@ use lib_mpc_zexe::vector_commitment::bytes::sha256::{
     JZVectorCommitmentInnerDigest as Sha2VectorCommitmentInnerDigest
 };
 
+#[derive(Clone, Copy)]
+pub enum UtxoField {
+    ENTROPY = 0, // merkle root for proving membership of input utxo
+    OWNER = 1, // merkle root for proving membership of input utxo
+    ASSETID = 2, // nullifier to the input utxo
+    AMOUNT = 3, // commitment of the output utxo
+    RHO = 4, // commitment of the output utxo
+}
+
 type Curve = ark_bls12_377::Bls12_377;
 type F = ark_bls12_377::Fr;
 type G1Affine = <Curve as Pairing>::G1Affine;

@@ -4,9 +4,3 @@ pub mod merkle_update_circuit;
 
 pub mod utils;
 pub mod protocol;
-
-pub const ENTROPY: usize = 0;
-pub const OWNER: usize = 1;
-pub const ASSET_ID: usize = 2;
-pub const AMOUNT: usize = 3;
-pub const RHO: usize = 4;

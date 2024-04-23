@@ -14,7 +14,7 @@ use ark_snark::SNARK;
 use lib_mpc_zexe::record_commitment::kzg::{*, constraints::*};
 
 use super::utils;
-use super::{AMOUNT, ASSET_ID};
+use super::protocol;
 
 // Finite Field used to encode the zk circuit
 type ConstraintF = ark_bw6_761::Fr;
@@ -59,7 +59,7 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
         // we need the asset_id and amount to be public inputs to the circuit
         // so let's create variables for them
         let asset_id = utils::bytes_to_field::<ConstraintF, 6>(
-            &self.utxo.fields[ASSET_ID]
+            &self.utxo.fields[protocol::UtxoField::ASSETID as usize]
         );
 
         let asset_id_var = ark_bls12_377::constraints::FqVar::new_input(
@@ -68,7 +68,7 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
         ).unwrap();
 
         let amount = utils::bytes_to_field::<ConstraintF, 6>(
-            &self.utxo.fields[AMOUNT]
+            &self.utxo.fields[protocol::UtxoField::AMOUNT as usize]
         );
 
         let amount_var = ark_bls12_377::constraints::FqVar::new_input(
@@ -129,14 +129,20 @@ impl ConstraintSynthesizer<ConstraintF> for OnRampCircuit {
 
         // let's constrain the amount bits to be equal to the amount_var
         let amount_inputvar_bytes = amount_var.to_bytes()?;
-        for i in 0..min(utxo_var.fields[AMOUNT].len(), amount_inputvar_bytes.len()) {
-            utxo_var.fields[AMOUNT][i].enforce_equal(&amount_inputvar_bytes[i])?;
+        for i in 0..min(
+            utxo_var.fields[protocol::UtxoField::AMOUNT as usize].len(),
+            amount_inputvar_bytes.len()
+        ) {
+            utxo_var.fields[protocol::UtxoField::AMOUNT as usize][i].enforce_equal(&amount_inputvar_bytes[i])?;
         }
 
         // let's constrain the asset_id bits to be equal to the asset_id_var
         let assetid_inputvar_bytes = asset_id_var.to_bytes()?;
-        for i in 0..min(utxo_var.fields[ASSET_ID].len(), assetid_inputvar_bytes.len()) {
-            utxo_var.fields[ASSET_ID][i].enforce_equal(&assetid_inputvar_bytes[i])?;
+        for i in 0..min(
+            utxo_var.fields[protocol::UtxoField::ASSETID as usize].len(), 
+            assetid_inputvar_bytes.len()
+        ) {
+            utxo_var.fields[protocol::UtxoField::ASSETID as usize][i].enforce_equal(&assetid_inputvar_bytes[i])?;
         }
 
         Ok(())
@@ -168,12 +174,12 @@ pub fn generate_groth_proof(
 
     // construct a BW6_761 field element from the asset_id bits
     let asset_id = utils::bytes_to_field::<ConstraintF, 6>(
-        &circuit.utxo.fields[ASSET_ID]
+        &circuit.utxo.fields[protocol::UtxoField::ASSETID as usize]
     );
 
     // construct a BW6_761 field element from the amount bits
     let amount = utils::bytes_to_field::<ConstraintF, 6>(
-        &circuit.utxo.fields[AMOUNT]
+        &circuit.utxo.fields[protocol::UtxoField::AMOUNT as usize]
     );
 
     // arrange the public inputs based on the GrothPublicInput enum definition
