@@ -1,0 +1,25 @@
+[package]
+name = "sanctum-proof-verifier-contract"
+version = "0.0.0"
+authors = ["zkBricks"]
+license = "Apache-2.0"
+edition = "2021"
+rust-version = "1.74.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+ark-ff = { version = "^0.3.0", default-features = false }
+ark-ec = { version = "^0.3.0", default-features = false }
+ark-serialize = { version = "^0.3.0", default-features = false, features = [ "derive" ] }
+ark-std = { version = "^0.3.0", default-features = false }
+ark-bls12-377 = { version = "^0.3.0", default-features = false, features = ["curve"] }
+wee_alloc = "0.4.5"
+
+[dev_dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+hex = "0.3.1"
